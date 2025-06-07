@@ -3,6 +3,8 @@
 *.secret
 *.token
 .rtm_auth_token
+.rtm_api_key
+.rtm_shared_secret
 .env
 .env.*
 

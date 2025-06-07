@@ -1,0 +1,669 @@
+#!/usr/bin/env ruby
+
+require 'json'
+require 'net/http'
+require 'uri'
+require 'digest'
+
+class RTMClient
+  BASE_URL = 'https://api.rememberthemilk.com/services/rest/'
+  
+  def initialize(api_key, shared_secret)
+    @api_key = api_key
+    @shared_secret = shared_secret
+  end
+  
+  def call_method(method, params = {})
+    # Add required parameters
+    params[:method] = method
+    params[:api_key] = @api_key
+    params[:format] = 'json'
+    
+    # Add auth token if available and not an auth method
+    unless method.start_with?('rtm.auth.') || method == 'rtm.test.echo'
+      auth_token = load_auth_token
+      params[:auth_token] = auth_token if auth_token
+    end
+    
+    # Add timeline for write operations
+    if requires_timeline?(method)
+      timeline = get_timeline
+      params[:timeline] = timeline if timeline
+    end
+    
+    # Generate API signature
+    params[:api_sig] = generate_signature(params)
+    
+    # Make request
+    uri = URI(BASE_URL)
+    uri.query = URI.encode_www_form(params)
+    
+    response = Net::HTTP.get_response(uri)
+    
+    if response.code == '200'
+      JSON.parse(response.body)
+    else
+      { 'error' => "HTTP #{response.code}: #{response.message}" }
+    end
+  rescue => e
+    { 'error' => "Request failed: #{e.message}" }
+  end
+  
+  private
+  
+  def requires_timeline?(method)
+    # Write operations that modify data require a timeline
+    write_methods = %w[
+      rtm.lists.add rtm.lists.archive rtm.lists.delete rtm.lists.setDefaultList 
+      rtm.lists.setName rtm.lists.unarchive rtm.tasks.add rtm.tasks.addTags 
+      rtm.tasks.complete rtm.tasks.delete rtm.tasks.movePriority rtm.tasks.moveTo 
+      rtm.tasks.notes.add rtm.tasks.notes.delete rtm.tasks.notes.edit 
+      rtm.tasks.postpone rtm.tasks.removeTags rtm.tasks.setDueDate 
+      rtm.tasks.setEstimate rtm.tasks.setLocation rtm.tasks.setName 
+      rtm.tasks.setParentTask rtm.tasks.setPriority rtm.tasks.setRecurrence 
+      rtm.tasks.setStartDate rtm.tasks.setTags rtm.tasks.setURL rtm.tasks.uncomplete
+    ]
+    write_methods.include?(method)
+  end
+  
+  def get_timeline
+    return @timeline if @timeline
+    
+    # Get a new timeline
+    result = call_method_without_timeline('rtm.timelines.create')
+    @timeline = result.dig('rsp', 'timeline')
+    @timeline
+  end
+  
+  def call_method_without_timeline(method, params = {})
+    # Internal method that doesn't add timeline (to avoid infinite recursion)
+    params[:method] = method
+    params[:api_key] = @api_key
+    params[:format] = 'json'
+    
+    # Add auth token if available and not an auth method
+    unless method.start_with?('rtm.auth.') || method == 'rtm.test.echo'
+      auth_token = load_auth_token
+      params[:auth_token] = auth_token if auth_token
+    end
+    
+    # Generate API signature
+    params[:api_sig] = generate_signature(params)
+    
+    # Make request
+    uri = URI(BASE_URL)
+    uri.query = URI.encode_www_form(params)
+    
+    response = Net::HTTP.get_response(uri)
+    
+    if response.code == '200'
+      JSON.parse(response.body)
+    else
+      { 'error' => "HTTP #{response.code}: #{response.message}" }
+    end
+  rescue => e
+    { 'error' => "Request failed: #{e.message}" }
+  end
+  
+  def load_auth_token
+    token_file = File.join(__dir__, '.rtm_auth_token')
+    return nil unless File.exist?(token_file)
+    File.read(token_file).strip
+  rescue
+    nil
+  end
+  
+  def generate_signature(params)
+    # Sort parameters alphabetically and create signature string
+    sorted_params = params.sort.map { |k, v| "#{k}#{v}" }.join
+    signature_string = @shared_secret + sorted_params
+    Digest::MD5.hexdigest(signature_string)
+  end
+end
+
+class RTMMCPServer
+  def initialize
+    # Get credentials from command line arguments
+    @api_key = ARGV[0]
+    @shared_secret = ARGV[1]
+    
+    unless @api_key && @shared_secret
+      STDERR.puts "Usage: #{$0} [api-key] [shared-secret]"
+      exit 1
+    end
+    
+    @rtm = RTMClient.new(@api_key, @shared_secret)
+  end
+  
+  def run
+    STDERR.puts "RTM MCP Server starting..."
+    
+    loop do
+      begin
+        line = STDIN.readline
+        request = JSON.parse(line)
+        
+        response = handle_request(request)
+        puts JSON.generate(response)
+        STDOUT.flush
+        
+      rescue EOFError
+        break
+      rescue => e
+        STDERR.puts "Error: #{e.message}"
+        # Ensure proper MCP error response format
+        error_response = {
+          "jsonrpc" => "2.0",
+          "error" => {
+            "code" => -32603,
+            "message" => "Internal error: #{e.message}"
+          },
+          "id" => nil
+        }
+        puts JSON.generate(error_response)
+        STDOUT.flush
+      end
+    end
+  end
+  
+  private
+  
+  def handle_request(request)
+    case request['method']
+    when 'initialize'
+      handle_initialize(request)
+    when 'tools/list'
+      handle_tools_list(request)
+    when 'tools/call'
+      handle_tools_call(request)
+    else
+      {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32601,
+          "message" => "Method not found: #{request['method']}"
+        },
+        "id" => request['id']
+      }
+    end
+  end
+  
+  def handle_initialize(request)
+    {
+      "jsonrpc" => "2.0",
+      "result" => {
+        "protocolVersion" => "2024-11-05",
+        "capabilities" => {
+          "tools" => {}
+        },
+        "serverInfo" => {
+          "name" => "rtm-mcp",
+          "version" => "0.1.0"
+        }
+      },
+      "id" => request['id']
+    }
+  end
+  
+  def handle_tools_list(request)
+    {
+      "jsonrpc" => "2.0",
+      "result" => {
+        "tools" => [
+          {
+            "name" => "test_connection",
+            "description" => "Test basic connectivity to RTM API",
+            "inputSchema" => {
+              "type" => "object",
+              "properties" => {},
+              "required" => []
+            }
+          },
+          {
+            "name" => "list_all_lists",
+            "description" => "Get all RTM lists",
+            "inputSchema" => {
+              "type" => "object",
+              "properties" => {},
+              "required" => []
+            }
+          },
+          {
+            "name" => "create_list",
+            "description" => "Create a new RTM list",
+            "inputSchema" => {
+              "type" => "object",
+              "properties" => {
+                "name" => {
+                  "type" => "string",
+                  "description" => "Name of the new list"
+                }
+              },
+              "required" => ["name"]
+            }
+          },
+          {
+            "name" => "list_tasks",
+            "description" => "Get tasks from RTM with optional filtering",
+            "inputSchema" => {
+              "type" => "object",
+              "properties" => {
+                "list_id" => {
+                  "type" => "string",
+                  "description" => "Filter by specific list ID (optional)"
+                },
+                "filter" => {
+                  "type" => "string",
+                  "description" => "RTM search filter (e.g., 'status:incomplete', 'dueWithin:\"1 week\"')"
+                }
+              },
+              "required" => []
+            }
+          },
+          {
+            "name" => "create_task",
+            "description" => "Create a new task in RTM",
+            "inputSchema" => {
+              "type" => "object",
+              "properties" => {
+                "name" => {
+                  "type" => "string",
+                  "description" => "Task name"
+                },
+                "list_id" => {
+                  "type" => "string",
+                  "description" => "List ID to create task in (optional, uses default list if not specified)"
+                }
+              },
+              "required" => ["name"]
+            }
+          },
+          {
+            "name" => "complete_task",
+            "description" => "Mark a task as complete",
+            "inputSchema" => {
+              "type" => "object",
+              "properties" => {
+                "list_id" => {
+                  "type" => "string",
+                  "description" => "List ID containing the task"
+                },
+                "taskseries_id" => {
+                  "type" => "string", 
+                  "description" => "Task series ID"
+                },
+                "task_id" => {
+                  "type" => "string",
+                  "description" => "Task ID"
+                }
+              },
+              "required" => ["list_id", "taskseries_id", "task_id"]
+            }
+          }
+        ]
+      },
+      "id" => request['id']
+    }
+  end
+  
+  def handle_tools_call(request)
+    tool_name = request.dig('params', 'name')
+    arguments = request.dig('params', 'arguments') || {}
+    
+    case tool_name
+    when 'test_connection'
+      handle_test_connection(request, arguments)
+    when 'list_all_lists'
+      handle_list_all_lists(request, arguments)
+    when 'create_list'
+      handle_create_list(request, arguments)
+    when 'list_tasks'
+      handle_list_tasks(request, arguments)
+    when 'create_task'
+      handle_create_task(request, arguments)
+    when 'complete_task'
+      handle_complete_task(request, arguments)
+    else
+      {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32602,
+          "message" => "Unknown tool: #{tool_name}"
+        },
+        "id" => request['id']
+      }
+    end
+  end
+  
+  def handle_test_connection(request, arguments)
+    result = @rtm.call_method('rtm.test.echo', { test: 'hello' })
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32603,
+          "message" => "RTM API Error: #{error_msg}"
+        },
+        "id" => request['id']
+      }
+    else
+      {
+        "jsonrpc" => "2.0",
+        "result" => {
+          "content" => [
+            {
+              "type" => "text",
+              "text" => "✅ RTM API connection successful!\n\nResponse: #{JSON.pretty_generate(result)}"
+            }
+          ]
+        },
+        "id" => request['id']
+      }
+    end
+  end
+  
+  def handle_list_all_lists(request, arguments)
+    result = @rtm.call_method('rtm.lists.getList')
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32603,
+          "message" => "RTM API Error: #{error_msg}"
+        },
+        "id" => request['id']
+      }
+    else
+      lists = result.dig('rsp', 'lists', 'list') || []
+      lists = [lists] unless lists.is_a?(Array)  # Handle single list case
+      
+      list_text = lists.map do |list|
+        "• #{list['name']} (ID: #{list['id']})" + 
+        (list['archived'] == '1' ? ' [archived]' : '') +
+        (list['smart'] == '1' ? ' [smart]' : '')
+      end.join("\n")
+      
+      {
+        "jsonrpc" => "2.0",
+        "result" => {
+          "content" => [
+            {
+              "type" => "text",
+              "text" => "📝 RTM Lists:\n\n#{list_text}"
+            }
+          ]
+        },
+        "id" => request['id']
+      }
+    end
+  end
+  
+  def handle_create_list(request, arguments)
+    name = arguments['name']
+    
+    unless name && !name.empty?
+      return {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32602,
+          "message" => "List name is required"
+        },
+        "id" => request['id']
+      }
+    end
+    
+    result = @rtm.call_method('rtm.lists.add', { name: name })
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32603,
+          "message" => "RTM API Error: #{error_msg}"
+        },
+        "id" => request['id']
+      }
+    else
+      list = result.dig('rsp', 'list')
+      if list
+        {
+          "jsonrpc" => "2.0",
+          "result" => {
+            "content" => [
+              {
+                "type" => "text",
+                "text" => "✅ Created list: #{list['name']} (ID: #{list['id']})"
+              }
+            ]
+          },
+          "id" => request['id']
+        }
+      else
+        {
+          "jsonrpc" => "2.0",
+          "error" => {
+            "code" => -32603,
+            "message" => "List created but couldn't parse response"
+          },
+          "id" => request['id']
+        }
+      end
+    end
+  end
+  
+  def handle_list_tasks(request, arguments)
+    list_id = arguments['list_id']
+    filter = arguments['filter']
+    
+    params = {}
+    params[:list_id] = list_id if list_id
+    params[:filter] = filter if filter && !filter.empty?
+    
+    result = @rtm.call_method('rtm.tasks.getList', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32603,
+          "message" => "RTM API Error: #{error_msg}"
+        },
+        "id" => request['id']
+      }
+    else
+      tasks_text = format_tasks(result)
+      {
+        "jsonrpc" => "2.0",
+        "result" => {
+          "content" => [
+            {
+              "type" => "text",
+              "text" => tasks_text
+            }
+          ]
+        },
+        "id" => request['id']
+      }
+    end
+  end
+  
+  def handle_create_task(request, arguments)
+    name = arguments['name']
+    list_id = arguments['list_id']
+    
+    unless name && !name.empty?
+      return {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32602,
+          "message" => "Task name is required"
+        },
+        "id" => request['id']
+      }
+    end
+    
+    params = { name: name }
+    params[:list_id] = list_id if list_id
+    
+    result = @rtm.call_method('rtm.tasks.add', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32603,
+          "message" => "RTM API Error: #{error_msg}"
+        },
+        "id" => request['id']
+      }
+    else
+      # RTM returns the task in a list structure
+      list = result.dig('rsp', 'list')
+      task = list&.dig('taskseries')
+      
+      if task
+        task_name = task['name'] || name
+        list_name = list['name'] || 'Unknown list'
+        {
+          "jsonrpc" => "2.0",
+          "result" => {
+            "content" => [
+              {
+                "type" => "text",
+                "text" => "✅ Created task: #{task_name} in #{list_name}"
+              }
+            ]
+          },
+          "id" => request['id']
+        }
+      else
+        {
+          "jsonrpc" => "2.0",
+          "error" => {
+            "code" => -32603,
+            "message" => "Task created but couldn't parse response"
+          },
+          "id" => request['id']
+        }
+      end
+    end
+  end
+  
+  def handle_complete_task(request, arguments)
+    list_id = arguments['list_id']
+    taskseries_id = arguments['taskseries_id']
+    task_id = arguments['task_id']
+    
+    unless list_id && taskseries_id && task_id
+      return {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32602,
+          "message" => "list_id, taskseries_id, and task_id are required"
+        },
+        "id" => request['id']
+      }
+    end
+    
+    params = {
+      list_id: list_id,
+      taskseries_id: taskseries_id,
+      task_id: task_id
+    }
+    
+    result = @rtm.call_method('rtm.tasks.complete', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      {
+        "jsonrpc" => "2.0",
+        "error" => {
+          "code" => -32603,
+          "message" => "RTM API Error: #{error_msg}"
+        },
+        "id" => request['id']
+      }
+    else
+      {
+        "jsonrpc" => "2.0",
+        "result" => {
+          "content" => [
+            {
+              "type" => "text",
+              "text" => "✅ Task completed successfully!"
+            }
+          ]
+        },
+        "id" => request['id']
+      }
+    end
+  end
+  
+  private
+  
+  def format_tasks(result)
+    lists = result.dig('rsp', 'tasks', 'list')
+    return "📋 No tasks found." unless lists
+    
+    lists = [lists] unless lists.is_a?(Array)
+    task_count = 0
+    output = []
+    
+    lists.each do |list|
+      next unless list['taskseries']
+      
+      list_name = list['name'] || "List #{list['id']}"
+      taskseries = list['taskseries']
+      taskseries = [taskseries] unless taskseries.is_a?(Array)
+      
+      list_tasks = []
+      taskseries.each do |ts|
+        task = ts['task']
+        task = [task] unless task.is_a?(Array)
+        
+        task.each do |t|
+          next if t['completed'] && !t['completed'].empty?  # Skip completed tasks
+          
+          status = "🔲"
+          priority = case ts['priority']
+                   when '1' then " 🔴"
+                   when '2' then " 🟡"  
+                   when '3' then " 🔵"
+                   else ""
+                   end
+          
+          due_text = t['due'] && !t['due'].empty? ? " (due: #{t['due']})" : ""
+          
+          list_tasks << "  #{status} #{ts['name']}#{priority}#{due_text}"
+          list_tasks << "    IDs: list=#{list['id']}, series=#{ts['id']}, task=#{t['id']}"
+          task_count += 1
+        end
+      end
+      
+      if list_tasks.any?
+        output << "📝 **#{list_name}**:"
+        output.concat(list_tasks)
+        output << ""
+      end
+    end
+    
+    if output.empty?
+      "📋 No incomplete tasks found."
+    else
+      "📋 **Tasks** (#{task_count} total):\n\n" + output.join("\n")
+    end
+  end
+end
+
+# Start the server if this file is run directly
+if __FILE__ == $0
+  server = RTMMCPServer.new
+  server.run
+end

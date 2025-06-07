@@ -172,7 +172,6 @@ class RTMMCPServer
     end
     
     @rtm = RTMClient.new(@api_key, @shared_secret)
-    @list_cache = nil  # Cache for list information
     @tools = [
       {
         name: 'test_connection',
@@ -249,28 +248,6 @@ class RTMMCPServer
       {
         name: 'complete_task',
         description: 'Mark a task as complete',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id']
-        }
-      },
-      {
-        name: 'delete_task',
-        description: 'Permanently delete a task (stops recurrence, unlike complete_task)',
         inputSchema: {
           type: 'object',
           properties: {
@@ -370,106 +347,6 @@ class RTMMCPServer
         }
       },
       {
-        name: 'set_due_date',
-        description: 'Set or update the due date of a task',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            },
-            due: {
-              type: 'string',
-              description: 'Due date (e.g., "today", "tomorrow", "next week", "June 15", "2025-06-20", "3pm", "tomorrow at 2pm"). Use empty string to clear.'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id', 'due']
-        }
-      },
-      {
-        name: 'set_task_start_date',
-        description: 'Set or update the start date of a task',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            },
-            start: {
-              type: 'string',
-              description: 'Start date (e.g., "today", "tomorrow", "next week", "June 15", "2025-06-20", "3pm", "tomorrow at 2pm"). Use empty string to clear.'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id', 'start']
-        }
-      },
-      {
-        name: 'set_task_recurrence',
-        description: 'Set or update recurrence rules for a task',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            },
-            repeat: {
-              type: 'string',
-              description: 'Recurrence pattern (e.g., "every day", "every 2 weeks", "every month", "every monday", "every weekday", "after 1 week")'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id', 'repeat']
-        }
-      },
-      {
-        name: 'clear_task_recurrence',
-        description: 'Clear/remove recurrence from a task',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id']
-        }
-      },
-      {
         name: 'archive_list',
         description: 'Archive an RTM list',
         inputSchema: {
@@ -501,13 +378,13 @@ class RTMMCPServer
               type: 'string',
               description: 'Task ID'
             },
-            text: {
-              type: 'string',
-              description: 'Note text content'
-            },
             title: {
               type: 'string',
               description: 'Note title (optional)'
+            },
+            text: {
+              type: 'string',
+              description: 'Note text content'
             }
           },
           required: ['list_id', 'taskseries_id', 'task_id', 'text']
@@ -523,13 +400,13 @@ class RTMMCPServer
               type: 'string',
               description: 'Note ID to edit'
             },
-            text: {
-              type: 'string',
-              description: 'New note text content'
-            },
             title: {
               type: 'string',
               description: 'New note title (optional)'
+            },
+            text: {
+              type: 'string',
+              description: 'New note text content'
             }
           },
           required: ['note_id', 'text']
@@ -547,28 +424,6 @@ class RTMMCPServer
             }
           },
           required: ['note_id']
-        }
-      },
-      {
-        name: 'read_task_notes',
-        description: 'Read all notes attached to a task',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id']
         }
       },
       {
@@ -595,128 +450,6 @@ class RTMMCPServer
             }
           },
           required: ['name', 'parent_list_id', 'parent_taskseries_id', 'parent_task_id']
-        }
-      },
-      {
-        name: 'list_subtasks',
-        description: 'List all subtasks of a parent task (limited functionality - see output for details)',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            parent_list_id: {
-              type: 'string',
-              description: 'List ID of the parent task'
-            },
-            parent_taskseries_id: {
-              type: 'string',
-              description: 'Task series ID of the parent task'
-            },
-            parent_name: {
-              type: 'string',
-              description: 'Name of the parent task (optional, helps identify subtasks)'
-            }
-          },
-          required: ['parent_list_id', 'parent_taskseries_id']
-        }
-      },
-      {
-        name: 'move_task',
-        description: 'Move a task to a different list',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            },
-            to_list_id: {
-              type: 'string',
-              description: 'Destination list ID to move the task to'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id', 'to_list_id']
-        }
-      },
-      {
-        name: 'postpone_task',
-        description: 'Postpone a task (delays the due date)',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id']
-        }
-      },
-      {
-        name: 'set_task_estimate',
-        description: 'Set or clear the time estimate for a task',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            },
-            estimate: {
-              type: 'string',
-              description: 'Time estimate (e.g., "30 minutes", "2 hours", "1 day", "30m", "2h", "1d") or empty string to clear'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id', 'estimate']
-        }
-      },
-      {
-        name: 'set_task_name',
-        description: 'Rename a task',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            list_id: {
-              type: 'string',
-              description: 'List ID containing the task'
-            },
-            taskseries_id: {
-              type: 'string',
-              description: 'Task series ID'
-            },
-            task_id: {
-              type: 'string',
-              description: 'Task ID'
-            },
-            name: {
-              type: 'string',
-              description: 'New name for the task'
-            }
-          },
-          required: ['list_id', 'taskseries_id', 'task_id', 'name']
         }
       }
     ]
@@ -760,44 +493,22 @@ class RTMMCPServer
       create_task(args['name'], args['list_id'])
     when 'complete_task'
       complete_task(args['list_id'], args['taskseries_id'], args['task_id'])
-    when 'delete_task'
-      delete_task(args['list_id'], args['taskseries_id'], args['task_id'])
     when 'set_task_priority'
       set_task_priority(args['list_id'], args['taskseries_id'], args['task_id'], args['priority'])
     when 'add_task_tags'
       add_task_tags(args['list_id'], args['taskseries_id'], args['task_id'], args['tags'])
     when 'remove_task_tags'
       remove_task_tags(args['list_id'], args['taskseries_id'], args['task_id'], args['tags'])
-    when 'set_due_date'
-      set_due_date(args['list_id'], args['taskseries_id'], args['task_id'], args['due'])
-    when 'set_task_start_date'
-      set_task_start_date(args['list_id'], args['taskseries_id'], args['task_id'], args['start'])
-    when 'set_task_recurrence'
-      set_task_recurrence(args['list_id'], args['taskseries_id'], args['task_id'], args['repeat'])
-    when 'clear_task_recurrence'
-      clear_task_recurrence(args['list_id'], args['taskseries_id'], args['task_id'])
     when 'archive_list'
       archive_list(args['list_id'])
     when 'add_task_note'
-      add_task_note(args['list_id'], args['taskseries_id'], args['task_id'], args['text'], args['title'])
+      add_task_note(args['list_id'], args['taskseries_id'], args['task_id'], args['title'], args['text'])
     when 'edit_task_note'
-      edit_task_note(args['note_id'], args['text'], args['title'])
+      edit_task_note(args['note_id'], args['title'], args['text'])
     when 'delete_task_note'
       delete_task_note(args['note_id'])
-    when 'read_task_notes'
-      read_task_notes(args['list_id'], args['taskseries_id'], args['task_id'])
     when 'create_subtask'
       create_subtask(args['name'], args['parent_list_id'], args['parent_taskseries_id'], args['parent_task_id'])
-    when 'list_subtasks'
-      list_subtasks(args['parent_list_id'], args['parent_taskseries_id'], args['parent_name'])
-    when 'move_task'
-      move_task(args['list_id'], args['taskseries_id'], args['task_id'], args['to_list_id'])
-    when 'postpone_task'
-      postpone_task(args['list_id'], args['taskseries_id'], args['task_id'])
-    when 'set_task_estimate'
-      set_task_estimate(args['list_id'], args['taskseries_id'], args['task_id'], args['estimate'])
-    when 'set_task_name'
-      set_task_name(args['list_id'], args['taskseries_id'], args['task_id'], args['name'])
     else
       return { error: { code: -32602, message: "Unknown tool: #{tool_name}" } }
     end
@@ -865,114 +576,10 @@ class RTMMCPServer
       error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
       "❌ RTM API Error: #{error_msg}"
     else
-      # Check if we have any results
-      lists = result.dig('rsp', 'tasks', 'list')
-      has_results = false
-      task_count = 0
-      
-      if lists
-        lists_array = lists.is_a?(Array) ? lists : [lists]
-        lists_array.each do |list|
-          if list['taskseries']
-            taskseries = list['taskseries']
-            taskseries = [taskseries] unless taskseries.is_a?(Array)
-            task_count += taskseries.length
-            has_results = true
-          end
-        end
-      end
-      
-      # If no results and we had a filter, try auto-expanding
-      if !has_results && filter && !filter.empty?
-        # Try different expansion strategies
-        expanded_filter = nil
-        original_filter = filter
-        
-        # Strategy 1: If filter has AND conditions, try removing restrictive parts
-        if filter.include?(' AND ')
-          # Try keeping only status:incomplete if present
-          if filter.include?('status:incomplete')
-            expanded_filter = 'status:incomplete'
-          else
-            # Otherwise just take the first condition
-            expanded_filter = filter.split(' AND ').first
-          end
-        # Strategy 2: If searching by tag, try removing tag filter
-        elsif filter.start_with?('tag:')
-          expanded_filter = 'status:incomplete'
-        # Strategy 3: For other filters, try showing all incomplete tasks
-        elsif filter != 'status:incomplete'
-          expanded_filter = 'status:incomplete'
-        end
-        
-        # If we have an expanded filter different from original, try it
-        if expanded_filter && expanded_filter != original_filter
-          expanded_params = { v: '2' }
-          expanded_params[:list_id] = list_id if list_id
-          expanded_params[:filter] = expanded_filter
-          
-          expanded_result = @rtm.call_method('rtm.tasks.getList', expanded_params)
-          
-          if expanded_result.dig('rsp', 'stat') == 'ok'
-            # Get list of parent task IDs with expanded search
-            parent_task_ids = get_parent_task_ids(list_id, expanded_filter)
-            
-            # Format with auto-expand note
-            expanded_lists = expanded_result.dig('rsp', 'tasks', 'list')
-            if expanded_lists
-              # Check if expanded search has results
-              expanded_task_count = 0
-              expanded_lists_array = expanded_lists.is_a?(Array) ? expanded_lists : [expanded_lists]
-              expanded_lists_array.each do |list|
-                if list['taskseries']
-                  taskseries = list['taskseries']
-                  taskseries = [taskseries] unless taskseries.is_a?(Array)
-                  expanded_task_count += taskseries.length
-                end
-              end
-              
-              if expanded_task_count > 0
-                expanded_output = format_tasks(expanded_result, parent_task_ids, show_ids)
-                return "📋 **Auto-expanded search**\n" +
-                       "No tasks matched filter: `#{original_filter}`\n" +
-                       "Showing results for: `#{expanded_filter}`\n\n" +
-                       expanded_output
-              end
-            end
-          end
-        end
-      end
-      
       # Get list of parent task IDs (tasks that have subtasks)
       parent_task_ids = get_parent_task_ids(list_id, filter)
       format_tasks(result, parent_task_ids, show_ids)
     end
-  end
-  
-  # Helper method to get list name by ID with caching
-  def get_list_name(list_id)
-    return "Default List" if list_id.nil? || list_id.empty?
-    
-    # Load list cache if not already loaded
-    if @list_cache.nil?
-      result = @rtm.call_method('rtm.lists.getList')
-      
-      if result['error'] || result.dig('rsp', 'stat') == 'fail'
-        return "Unknown List"
-      else
-        lists = result.dig('rsp', 'lists', 'list') || []
-        lists = [lists] unless lists.is_a?(Array)  # Handle single list case
-        
-        # Create a hash for fast lookup: list_id -> list_name
-        @list_cache = {}
-        lists.each { |list| @list_cache[list['id']] = list['name'] }
-      end
-    end
-    
-    # Look up the list name in cache
-    @list_cache[list_id] || "Unknown List"
-  rescue
-    "Unknown List"
   end
   
   def create_task(name, list_id = nil)
@@ -1000,11 +607,8 @@ class RTMMCPServer
       
       if task
         task_name = task['name'] || name
-        # Get the correct list name using the list ID from the response
-        actual_list_id = list['id']
-        list_name = get_list_name(actual_list_id)
-        task_id = task['task'].is_a?(Array) ? task['task'][0]['id'] : task['task']['id']
-        "✅ Created task: #{task_name} in #{list_name}\n   IDs: list=#{actual_list_id}, series=#{task['id']}, task=#{task_id}"
+        list_name = list['name'] || 'Unknown list'
+        "✅ Created task: #{task_name} in #{list_name}"
       else
         "❌ Task created but couldn't parse response"
       end
@@ -1029,27 +633,6 @@ class RTMMCPServer
       "❌ RTM API Error: #{error_msg}"
     else
       "✅ Task completed successfully!"
-    end
-  end
-  
-  def delete_task(list_id, taskseries_id, task_id)
-    unless list_id && taskseries_id && task_id
-      return "Error: list_id, taskseries_id, and task_id are required"
-    end
-    
-    params = {
-      list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id
-    }
-    
-    result = @rtm.call_method('rtm.tasks.delete', params)
-    
-    if result['error'] || result.dig('rsp', 'stat') == 'fail'
-      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
-      "❌ RTM API Error: #{error_msg}"
-    else
-      "✅ Task deleted permanently!"
     end
   end
   
@@ -1201,277 +784,6 @@ class RTMMCPServer
     end
   end
   
-  def set_due_date(list_id, taskseries_id, task_id, due)
-    unless list_id && taskseries_id && task_id && due != nil
-      return "Error: list_id, taskseries_id, task_id, and due are required"
-    end
-    
-    params = {
-      list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id,
-      due: due,
-      parse: '1'  # Enable natural language parsing
-    }
-    
-    result = @rtm.call_method('rtm.tasks.setDueDate', params)
-    
-    if result['error'] || result.dig('rsp', 'stat') == 'fail'
-      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
-      return "Error setting due date: #{error_msg}"
-    end
-    
-    # Extract updated task info
-    list = result.dig('rsp', 'list')
-    taskseries = list&.dig('taskseries')
-    
-    if taskseries
-      # Handle taskseries being an array
-      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
-      task = ts['task']
-      task = task.is_a?(Array) ? task[0] : task
-      
-      task_name = ts['name']
-      
-      if due.empty?
-        "✅ Due date cleared for: #{task_name}"
-      else
-        due_value = task['due']
-        has_time = task['has_due_time'] == '1'
-        
-        if due_value && !due_value.empty?
-          time_info = has_time ? " (includes time)" : " (date only)"
-          "✅ Due date set for: #{task_name}\n📅 Due: #{due_value}#{time_info}"
-        else
-          "✅ Due date updated for: #{task_name}"
-        end
-      end
-    else
-      if due.empty?
-        "✅ Due date cleared successfully!"
-      else
-        "✅ Due date set successfully!"
-      end
-    end
-  end
-  
-  def set_task_start_date(list_id, taskseries_id, task_id, start)
-    unless list_id && taskseries_id && task_id && start != nil
-      return "Error: list_id, taskseries_id, task_id, and start are required"
-    end
-    
-    params = {
-      list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id,
-      start: start,
-      parse: '1',  # Enable natural language parsing
-      v: '2'       # API version 2 required for setStartDate
-    }
-    
-    result = @rtm.call_method('rtm.tasks.setStartDate', params)
-    
-    if result['error'] || result.dig('rsp', 'stat') == 'fail'
-      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
-      return "Error setting start date: #{error_msg}"
-    end
-    
-    # Extract updated task info
-    list = result.dig('rsp', 'list')
-    taskseries = list&.dig('taskseries')
-    
-    if taskseries
-      # Handle taskseries being an array
-      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
-      task = ts['task']
-      task = task.is_a?(Array) ? task[0] : task
-      
-      task_name = ts['name']
-      
-      if start.empty?
-        "✅ Start date cleared for: #{task_name}"
-      else
-        start_value = task['start']
-        has_time = task['has_start_time'] == '1'
-        
-        if start_value && !start_value.empty?
-          time_info = has_time ? " (includes time)" : " (date only)"
-          "✅ Start date set for: #{task_name}\n🏁 Start: #{start_value}#{time_info}"
-        else
-          "✅ Start date updated for: #{task_name}"
-        end
-      end
-    else
-      if start.empty?
-        "✅ Start date cleared successfully!"
-      else
-        "✅ Start date set successfully!"
-      end
-    end
-  end
-  
-  def set_task_estimate(list_id, taskseries_id, task_id, estimate)
-    unless list_id && taskseries_id && task_id && estimate != nil
-      return "Error: list_id, taskseries_id, task_id, and estimate are required"
-    end
-    
-    params = {
-      list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id,
-      estimate: estimate
-    }
-    
-    result = @rtm.call_method('rtm.tasks.setEstimate', params)
-    
-    if result['error'] || result.dig('rsp', 'stat') == 'fail'
-      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
-      return "Error setting estimate: #{error_msg}"
-    end
-    
-    # Extract updated task info
-    list = result.dig('rsp', 'list')
-    taskseries = list&.dig('taskseries')
-    
-    if taskseries
-      # Handle taskseries being an array
-      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
-      task = ts['task']
-      task = task.is_a?(Array) ? task[0] : task
-      
-      task_name = ts['name']
-      
-      if estimate.empty?
-        "✅ Estimate cleared for: #{task_name}"
-      else
-        estimate_value = task['estimate']
-        "✅ Estimate set for: #{task_name}\n⏱️ Estimate: #{estimate_value}"
-      end
-    else
-      if estimate.empty?
-        "✅ Estimate cleared successfully!"
-      else
-        "✅ Estimate set successfully!"
-      end
-    end
-  end
-
-  def set_task_name(list_id, taskseries_id, task_id, name)
-    unless list_id && taskseries_id && task_id && name
-      return "Error: list_id, taskseries_id, task_id, and name are required"
-    end
-    
-    params = {
-      list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id,
-      name: name
-    }
-    
-    result = @rtm.call_method('rtm.tasks.setName', params)
-    
-    if result['error'] || result.dig('rsp', 'stat') == 'fail'
-      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
-      return "Error renaming task: #{error_msg}"
-    end
-    
-    # Extract updated task info
-    list = result.dig('rsp', 'list')
-    taskseries = list&.dig('taskseries')
-    
-    if taskseries
-      # Handle taskseries being an array
-      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
-      new_name = ts['name']
-      
-      "✅ Task renamed to: #{new_name}"
-    else
-      "✅ Task renamed successfully!"
-    end
-  end
-
-  def set_task_recurrence(list_id, taskseries_id, task_id, repeat)
-    unless list_id && taskseries_id && task_id && repeat
-      return "Error: list_id, taskseries_id, task_id, and repeat pattern are required"
-    end
-    
-    params = {
-      list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id,
-      repeat: repeat
-    }
-    
-    result = @rtm.call_method('rtm.tasks.setRecurrence', params)
-    
-    if result['error'] || result.dig('rsp', 'stat') == 'fail'
-      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
-      return "Error setting recurrence: #{error_msg}"
-    end
-    
-    # Extract updated task info
-    list = result.dig('rsp', 'list')
-    taskseries = list&.dig('taskseries')
-    
-    if taskseries
-      # Handle taskseries being an array
-      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
-      task_name = ts['name']
-      rrule = ts['rrule']
-      
-      if rrule && rrule['$t']
-        every_value = rrule['every']
-        if every_value == '0'
-          "✅ Recurrence set for: #{task_name}\n🔄 Pattern: #{repeat} (after completion)\n📋 RRULE: #{rrule['$t']}"
-        else
-          "✅ Recurrence set for: #{task_name}\n🔄 Pattern: #{repeat}\n📋 RRULE: #{rrule['$t']}"
-        end
-      else
-        "✅ Recurrence updated for: #{task_name}"
-      end
-    else
-      "✅ Recurrence set successfully!"
-    end
-  end
-  
-  def clear_task_recurrence(list_id, taskseries_id, task_id)
-    unless list_id && taskseries_id && task_id
-      return "Error: list_id, taskseries_id, and task_id are required"
-    end
-    
-    params = {
-      list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id
-    }
-    
-    result = @rtm.call_method('rtm.tasks.setRecurrence', params)
-    
-    if result['error'] || result.dig('rsp', 'stat') == 'fail'
-      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
-      return "Error clearing recurrence: #{error_msg}"
-    end
-    
-    # Extract updated task info
-    list = result.dig('rsp', 'list')
-    taskseries = list&.dig('taskseries')
-    
-    if taskseries
-      # Handle taskseries being an array
-      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
-      task_name = ts['name']
-      rrule = ts['rrule']
-      
-      if rrule && rrule['$t'] && !rrule['$t'].empty?
-        "❌ Recurrence still active for: #{task_name}\n📋 RRULE: #{rrule['$t']}"
-      else
-        "✅ Recurrence cleared for: #{task_name}"
-      end
-    else
-      "✅ Recurrence cleared successfully!"
-    end
-  end
-  
   def archive_list(list_id)
     return "Error: List ID is required" unless list_id && !list_id.empty?
     
@@ -1490,7 +802,7 @@ class RTMMCPServer
     end
   end
   
-  def add_task_note(list_id, taskseries_id, task_id, text, title = nil)
+  def add_task_note(list_id, taskseries_id, task_id, title, text)
     return "Error: List ID, taskseries ID, task ID and text are required" unless list_id && taskseries_id && task_id && text
     
     params = {
@@ -1520,7 +832,7 @@ class RTMMCPServer
     end
   end
   
-  def edit_task_note(note_id, text, title = nil)
+  def edit_task_note(note_id, title, text)
     return "Error: Note ID and text are required" unless note_id && text
     
     params = {
@@ -1559,81 +871,6 @@ class RTMMCPServer
     else
       "✅ Note deleted successfully!"
     end
-  end
-  
-  def read_task_notes(list_id, taskseries_id, task_id)
-    return "Error: Task IDs are required" unless list_id && taskseries_id && task_id
-    
-    # Get task details to retrieve notes
-    resp = @rtm.call_method('rtm.tasks.getList', {
-      list_id: list_id,
-      filter: ""  # Empty filter to get all tasks
-    })
-    
-    # Find the specific task
-    taskseries = nil
-    task = nil
-    
-    # Check for the rsp wrapper
-    task_data = resp.dig('rsp', 'tasks') || resp['tasks']
-    
-    if task_data && task_data["list"]
-      lists = ensure_array(task_data["list"])
-      lists.each do |list|
-        next unless list["id"] == list_id
-        series_array = ensure_array(list["taskseries"])
-        series_array.each do |series|
-          if series["id"] == taskseries_id
-            taskseries = series
-            tasks = ensure_array(series["task"])
-            task = tasks.find { |t| t["id"] == task_id }
-            break
-          end
-        end
-      end
-    end
-    
-    return "Task not found" unless taskseries && task
-    
-    # Extract notes
-    if taskseries["notes"] && taskseries["notes"]["note"]
-      notes = ensure_array(taskseries["notes"]["note"])
-      
-      if notes.empty?
-        return "No notes found for this task"
-      end
-      
-      # Format notes for display
-      output = ["📝 **Notes for task: #{taskseries["name"]}**", ""]
-      
-      notes.each_with_index do |note, index|
-        output << "**Note #{index + 1}** (ID: #{note["id"]})"
-        output << "Title: #{note["title"]}" if note["title"] && !note["title"].empty?
-        output << "Created: #{format_time(note["created"])}"
-        output << "Modified: #{format_time(note["modified"])}" if note["modified"] != note["created"]
-        output << ""
-        output << note["$t"]  # Note content
-        output << ""
-        output << "---" if index < notes.length - 1
-        output << ""
-      end
-      
-      return output.join("\n").strip
-    else
-      return "No notes found for this task"
-    end
-  end
-  
-  def ensure_array(obj)
-    return [] if obj.nil?
-    obj.is_a?(Array) ? obj : [obj]
-  end
-  
-  def format_time(time_str)
-    return "" unless time_str
-    Time.parse(time_str).strftime("%Y-%m-%d %H:%M")
-  rescue
-    time_str
   end
   
   def create_subtask(name, parent_list_id, parent_taskseries_id, parent_task_id)
@@ -1694,192 +931,6 @@ class RTMMCPServer
     "IDs: list=#{new_task_info[:list_id]}, series=#{new_task_info[:taskseries_id]}, task=#{new_task_info[:task_id]}"
   end
   
-  def list_subtasks(parent_list_id, parent_taskseries_id, parent_name = nil)
-    # Note: RTM API doesn't provide parent_task_id field in responses even with v=2
-    # This is a workaround implementation
-    
-    output = []
-    output << "📋 **Subtasks Listing (Limited Functionality)**\n"
-    output << "**Note**: RTM API doesn't expose parent-child relationships in task lists."
-    output << "This tool shows a workaround approach.\n"
-    
-    if parent_name
-      output << "Parent task: #{parent_name}"
-    end
-    output << "Parent IDs: list=#{parent_list_id}, series=#{parent_taskseries_id}\n"
-    
-    # Strategy 1: Check if parent has subtasks
-    params = {
-      list_id: parent_list_id,
-      filter: 'hasSubtasks:true'
-    }
-    
-    result = @rtm.call_method('rtm.tasks.getList', params)
-    
-    if result.dig('rsp', 'stat') == 'ok'
-      lists = result.dig('rsp', 'tasks', 'list')
-      if lists
-        lists = [lists] unless lists.is_a?(Array)
-        
-        parent_found = false
-        lists.each do |list|
-          next unless list['taskseries']
-          taskseries = list['taskseries']
-          taskseries = [taskseries] unless taskseries.is_a?(Array)
-          
-          taskseries.each do |ts|
-            if ts['id'] == parent_taskseries_id
-              parent_found = true
-              output << "✅ Parent task confirmed to have subtasks\n"
-              break
-            end
-          end
-        end
-        
-        if !parent_found
-          output << "⚠️ This task doesn't appear to have any subtasks\n"
-          return output.join("\n")
-        end
-      end
-    end
-    
-    # Strategy 2: List all tasks and suggest manual identification
-    output << "\n**Workaround**: Here are all incomplete tasks in the list."
-    output << "Subtasks typically appear after their parent in RTM:\n"
-    
-    all_params = {
-      list_id: parent_list_id,
-      filter: 'status:incomplete'
-    }
-    
-    all_result = @rtm.call_method('rtm.tasks.getList', all_params)
-    
-    if all_result.dig('rsp', 'stat') == 'ok'
-      lists = all_result.dig('rsp', 'tasks', 'list')
-      if lists
-        lists = [lists] unless lists.is_a?(Array)
-        
-        found_parent = false
-        task_count = 0
-        
-        lists.each do |list|
-          next unless list['taskseries']
-          taskseries = list['taskseries']
-          taskseries = [taskseries] unless taskseries.is_a?(Array)
-          
-          taskseries.each do |ts|
-            task = ts['task']
-            task = [task] unless task.is_a?(Array)
-            
-            task.each do |t|
-              next if t['completed'] && !t['completed'].empty?
-              
-              if ts['id'] == parent_taskseries_id
-                found_parent = true
-                output << "\n**→ Parent: #{ts['name']}** ⬇️"
-              elsif found_parent && task_count < 10  # Show next 10 tasks after parent
-                status = "🔲"
-                output << "  #{status} #{ts['name']}"
-                task_count += 1
-              end
-            end
-          end
-        end
-        
-        if task_count > 0
-          output << "\n(Showing up to 10 tasks after parent - subtasks typically appear here)"
-        end
-      end
-    end
-    
-    output << "\n\n💡 **Tip**: Use the RTM website or app to see proper subtask hierarchy."
-    output.join("\n")
-  end
-  
-  def move_task(list_id, taskseries_id, task_id, to_list_id)
-    unless list_id && taskseries_id && task_id && to_list_id
-      return "Error: list_id, taskseries_id, task_id, and to_list_id are required"
-    end
-    
-    params = {
-      from_list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id,
-      to_list_id: to_list_id
-    }
-    
-    result = @rtm.call_method('rtm.tasks.moveTo', params)
-    
-    if result['error'] || result.dig('rsp', 'stat') == 'fail'
-      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
-      "❌ RTM API Error: #{error_msg}"
-    else
-      # Get the destination list name for a friendly response
-      to_list_name = get_list_name(to_list_id)
-      
-      # Extract task name from response if available
-      list_data = result.dig('rsp', 'list')
-      task_name = "Task"
-      
-      if list_data
-        list_data = list_data.first if list_data.is_a?(Array)
-        taskseries = list_data['taskseries']
-        if taskseries
-          taskseries = taskseries.first if taskseries.is_a?(Array)
-          task_name = taskseries['name'] if taskseries['name']
-        end
-      end
-      
-      "✅ Task '#{task_name}' moved to #{to_list_name}"
-    end
-  end
-  
-  def postpone_task(list_id, taskseries_id, task_id)
-    unless list_id && taskseries_id && task_id
-      return "Error: list_id, taskseries_id, and task_id are required"
-    end
-    
-    params = {
-      list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id
-    }
-    
-    result = @rtm.call_method('rtm.tasks.postpone', params)
-    
-    if result['error'] || result.dig('rsp', 'stat') == 'fail'
-      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
-      "❌ RTM API Error: #{error_msg}"
-    else
-      # Extract task name and new due date from response
-      list_data = result.dig('rsp', 'list')
-      task_name = "Task"
-      new_due_date = nil
-      
-      if list_data
-        list_data = list_data.first if list_data.is_a?(Array)
-        taskseries = list_data['taskseries']
-        if taskseries
-          taskseries = taskseries.first if taskseries.is_a?(Array)
-          task_name = taskseries['name'] if taskseries['name']
-          
-          # Get due date from task
-          task = taskseries['task']
-          if task
-            task = task.first if task.is_a?(Array)
-            new_due_date = task['due'] if task['due'] && !task['due'].empty?
-          end
-        end
-      end
-      
-      if new_due_date
-        "✅ Task '#{task_name}' postponed to #{new_due_date}"
-      else
-        "✅ Task '#{task_name}' postponed"
-      end
-    end
-  end
-
   private
   
   def get_parent_task_ids(list_id = nil, original_filter = nil)
@@ -1948,16 +999,10 @@ class RTMMCPServer
           
           due_text = t['due'] && !t['due'].empty? ? " (due: #{t['due']})" : ""
           
-          # Add start date display
-          start_text = t['start'] && !t['start'].empty? ? " 🏁#{t['start']}" : ""
-          
-          # Add estimate display
-          estimate_text = t['estimate'] && !t['estimate'].empty? ? " ⏱️#{t['estimate']}" : ""
-          
           # Check if this task has subtasks
           subtask_indicator = parent_task_ids.include?(ts['id']) ? " [has subtasks]" : ""
           
-          list_tasks << "#{status} #{ts['name']}#{priority}#{due_text}#{start_text}#{estimate_text}#{subtask_indicator}"
+          list_tasks << "#{status} #{ts['name']}#{priority}#{due_text}#{subtask_indicator}"
           
           # Add IDs if requested
           if show_ids
