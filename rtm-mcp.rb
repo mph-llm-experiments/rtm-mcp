@@ -4,6 +4,37 @@ require 'json'
 require 'net/http'
 require 'uri'
 require 'digest'
+require 'time'
+
+# Rate limiter to respect RTM's API limits
+class RateLimiter
+  def initialize(requests_per_second: 1, burst: 3)
+    @requests_per_second = requests_per_second
+    @burst = burst
+    @min_interval = 1.0 / @requests_per_second
+    @request_times = []
+  end
+  
+  def wait_if_needed
+    now = Time.now.to_f
+    
+    # Remove requests older than 1 second
+    @request_times.reject! { |t| now - t > 1.0 }
+    
+    # If we've made burst requests in the last second, wait
+    if @request_times.size >= @burst
+      oldest_in_window = @request_times.first
+      wait_time = (oldest_in_window + 1.0) - now
+      if wait_time > 0
+        STDERR.puts "[Rate limit] Waiting #{wait_time.round(2)}s..."
+        sleep(wait_time)
+      end
+    end
+    
+    # Record this request
+    @request_times << Time.now.to_f
+  end
+end
 
 class RTMClient
   BASE_URL = 'https://api.rememberthemilk.com/services/rest/'
@@ -11,6 +42,7 @@ class RTMClient
   def initialize(api_key, shared_secret)
     @api_key = api_key
     @shared_secret = shared_secret
+    @rate_limiter = RateLimiter.new(requests_per_second: 1, burst: 3)
   end
   
   def call_method(method, params = {})
@@ -37,6 +69,9 @@ class RTMClient
     # Make request
     uri = URI(BASE_URL)
     uri.query = URI.encode_www_form(params)
+    
+    # Apply rate limiting
+    @rate_limiter.wait_if_needed
     
     response = Net::HTTP.get_response(uri)
     
@@ -94,6 +129,9 @@ class RTMClient
     uri = URI(BASE_URL)
     uri.query = URI.encode_www_form(params)
     
+    # Apply rate limiting
+    @rate_limiter.wait_if_needed
+    
     response = Net::HTTP.get_response(uri)
     
     if response.code == '200'
@@ -122,258 +160,347 @@ class RTMClient
 end
 
 class RTMMCPServer
-  def initialize
-    # Get credentials from command line arguments
-    @api_key = ARGV[0]
-    @shared_secret = ARGV[1]
+  def initialize(auth_token = nil)
+    # Get credentials from command line arguments or environment
+    @api_key = ARGV[0] || ENV['RTM_API_KEY']
+    @shared_secret = ARGV[1] || ENV['RTM_SHARED_SECRET']
     
     unless @api_key && @shared_secret
       STDERR.puts "Usage: #{$0} [api-key] [shared-secret]"
+      STDERR.puts "Or set RTM_API_KEY and RTM_SHARED_SECRET environment variables"
       exit 1
     end
     
     @rtm = RTMClient.new(@api_key, @shared_secret)
-  end
-  
-  def run
-    STDERR.puts "RTM MCP Server starting..."
-    
-    loop do
-      begin
-        line = STDIN.readline
-        request = JSON.parse(line)
-        
-        response = handle_request(request)
-        puts JSON.generate(response)
-        STDOUT.flush
-        
-      rescue EOFError
-        break
-      rescue => e
-        STDERR.puts "Error: #{e.message}"
-        error_response = {
-          jsonrpc: "2.0",
-          error: {
-            code: -32603,
-            message: "Internal error: #{e.message}"
-          },
-          id: nil
+    @tools = [
+      {
+        name: 'test_connection',
+        description: 'Test basic connectivity to RTM API',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: []
         }
-        puts JSON.generate(error_response)
-        STDOUT.flush
-      end
+      },
+      {
+        name: 'list_all_lists',
+        description: 'Get all RTM lists',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: 'create_list',
+        description: 'Create a new RTM list',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: {
+              type: 'string',
+              description: 'Name of the new list'
+            }
+          },
+          required: ['name']
+        }
+      },
+      {
+        name: 'list_tasks',
+        description: 'Get tasks from RTM with optional filtering',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'Filter by specific list ID (optional)'
+            },
+            filter: {
+              type: 'string',
+              description: 'RTM search filter (e.g., \'status:incomplete\', \'dueWithin:"1 week"\')'
+            }
+          },
+          required: []
+        }
+      },
+      {
+        name: 'create_task',
+        description: 'Create a new task in RTM',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: {
+              type: 'string',
+              description: 'Task name'
+            },
+            list_id: {
+              type: 'string',
+              description: 'List ID to create task in (optional, uses default list if not specified)'
+            }
+          },
+          required: ['name']
+        }
+      },
+      {
+        name: 'complete_task',
+        description: 'Mark a task as complete',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'List ID containing the task'
+            },
+            taskseries_id: {
+              type: 'string',
+              description: 'Task series ID'
+            },
+            task_id: {
+              type: 'string',
+              description: 'Task ID'
+            }
+          },
+          required: ['list_id', 'taskseries_id', 'task_id']
+        }
+      },
+      {
+        name: 'set_task_priority',
+        description: 'Set the priority of a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'List ID containing the task'
+            },
+            taskseries_id: {
+              type: 'string',
+              description: 'Task series ID'
+            },
+            task_id: {
+              type: 'string',
+              description: 'Task ID'
+            },
+            priority: {
+              type: 'string',
+              description: 'Priority level: 1 (High), 2 (Medium), 3 (Low), or empty string (None)',
+              enum: ['1', '2', '3', '']
+            }
+          },
+          required: ['list_id', 'taskseries_id', 'task_id', 'priority']
+        }
+      },
+      {
+        name: 'add_task_tags',
+        description: 'Add tags to a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'List ID containing the task'
+            },
+            taskseries_id: {
+              type: 'string',
+              description: 'Task series ID'
+            },
+            task_id: {
+              type: 'string',
+              description: 'Task ID'
+            },
+            tags: {
+              type: 'string',
+              description: 'Comma-separated list of tags to add'
+            }
+          },
+          required: ['list_id', 'taskseries_id', 'task_id', 'tags']
+        }
+      },
+      {
+        name: 'remove_task_tags',
+        description: 'Remove tags from a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'List ID containing the task'
+            },
+            taskseries_id: {
+              type: 'string',
+              description: 'Task series ID'
+            },
+            task_id: {
+              type: 'string',
+              description: 'Task ID'
+            },
+            tags: {
+              type: 'string',
+              description: 'Comma-separated list of tags to remove'
+            }
+          },
+          required: ['list_id', 'taskseries_id', 'task_id', 'tags']
+        }
+      },
+      {
+        name: 'archive_list',
+        description: 'Archive an RTM list',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'ID of the list to archive'
+            }
+          },
+          required: ['list_id']
+        }
+      },
+      {
+        name: 'add_task_note',
+        description: 'Add a note to a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'List ID containing the task'
+            },
+            taskseries_id: {
+              type: 'string',
+              description: 'Task series ID'
+            },
+            task_id: {
+              type: 'string',
+              description: 'Task ID'
+            },
+            title: {
+              type: 'string',
+              description: 'Note title (optional)'
+            },
+            text: {
+              type: 'string',
+              description: 'Note text content'
+            }
+          },
+          required: ['list_id', 'taskseries_id', 'task_id', 'text']
+        }
+      },
+      {
+        name: 'edit_task_note',
+        description: 'Edit an existing note on a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            note_id: {
+              type: 'string',
+              description: 'Note ID to edit'
+            },
+            title: {
+              type: 'string',
+              description: 'New note title (optional)'
+            },
+            text: {
+              type: 'string',
+              description: 'New note text content'
+            }
+          },
+          required: ['note_id', 'text']
+        }
+      },
+      {
+        name: 'delete_task_note',
+        description: 'Delete a note from a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            note_id: {
+              type: 'string',
+              description: 'Note ID to delete'
+            }
+          },
+          required: ['note_id']
+        }
+      }
+    ]
+  end  
+  def handle_request(request)
+    case request['method']
+    when 'initialize'
+      { 
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'rtm-mcp', version: '0.1.0' }
+      }
+    when 'tools/list'
+      { tools: @tools }
+    when 'tools/call'
+      handle_tool_call(request['params'])
+    when 'notifications/initialized'
+      # Client notification that initialization is complete
+      nil
+    else
+      { error: { code: -32601, message: 'Method not found' } }
     end
   end
   
   private
   
-  def handle_request(request)
-    case request['method']
-    when 'initialize'
-      handle_initialize(request)
-    when 'tools/list'
-      handle_tools_list(request)
-    when 'tools/call'
-      handle_tools_call(request)
-    else
-      {
-        jsonrpc: "2.0",
-        error: {
-          code: -32601,
-          message: "Method not found: #{request['method']}"
-        },
-        id: request['id']
-      }
-    end
-  end
-  
-  def handle_initialize(request)
-    {
-      jsonrpc: "2.0",
-      result: {
-        protocolVersion: "2024-11-05",
-        capabilities: {
-          tools: {}
-        },
-        serverInfo: {
-          name: "rtm-mcp",
-          version: "0.1.0"
-        }
-      },
-      id: request['id']
-    }
-  end
-  
-  def handle_tools_list(request)
-    {
-      jsonrpc: "2.0",
-      result: {
-        tools: [
-          {
-            name: "test_connection",
-            description: "Test basic connectivity to RTM API",
-            inputSchema: {
-              type: "object",
-              properties: {},
-              required: []
-            }
-          },
-          {
-            name: "list_all_lists",
-            description: "Get all RTM lists",
-            inputSchema: {
-              type: "object",
-              properties: {},
-              required: []
-            }
-          },
-          {
-            name: "create_list",
-            description: "Create a new RTM list",
-            inputSchema: {
-              type: "object",
-              properties: {
-                name: {
-                  type: "string",
-                  description: "Name of the new list"
-                }
-              },
-              required: ["name"]
-            }
-          },
-          {
-            name: "list_tasks",
-            description: "Get tasks from RTM with optional filtering",
-            inputSchema: {
-              type: "object",
-              properties: {
-                list_id: {
-                  type: "string",
-                  description: "Filter by specific list ID (optional)"
-                },
-                filter: {
-                  type: "string",
-                  description: "RTM search filter (e.g., 'status:incomplete', 'dueWithin:\"1 week\"')"
-                }
-              },
-              required: []
-            }
-          },
-          {
-            name: "create_task",
-            description: "Create a new task in RTM",
-            inputSchema: {
-              type: "object",
-              properties: {
-                name: {
-                  type: "string",
-                  description: "Task name"
-                },
-                list_id: {
-                  type: "string",
-                  description: "List ID to create task in (optional, uses default list if not specified)"
-                }
-              },
-              required: ["name"]
-            }
-          },
-          {
-            name: "complete_task",
-            description: "Mark a task as complete",
-            inputSchema: {
-              type: "object",
-              properties: {
-                list_id: {
-                  type: "string",
-                  description: "List ID containing the task"
-                },
-                taskseries_id: {
-                  type: "string", 
-                  description: "Task series ID"
-                },
-                task_id: {
-                  type: "string",
-                  description: "Task ID"
-                }
-              },
-              required: ["list_id", "taskseries_id", "task_id"]
-            }
-          }
-        ]
-      },
-      id: request['id']
-    }
-  end
-  
-  def handle_tools_call(request)
-    tool_name = request.dig('params', 'name')
-    arguments = request.dig('params', 'arguments') || {}
+  def handle_tool_call(params)
+    tool_name = params['name']
+    args = params['arguments'] || {}
     
-    case tool_name
+    result = case tool_name
     when 'test_connection'
-      handle_test_connection(request, arguments)
+      test_connection
     when 'list_all_lists'
-      handle_list_all_lists(request, arguments)
+      list_all_lists
     when 'create_list'
-      handle_create_list(request, arguments)
+      create_list(args['name'])
     when 'list_tasks'
-      handle_list_tasks(request, arguments)
+      list_tasks(args['list_id'], args['filter'])
     when 'create_task'
-      handle_create_task(request, arguments)
+      create_task(args['name'], args['list_id'])
     when 'complete_task'
-      handle_complete_task(request, arguments)
+      complete_task(args['list_id'], args['taskseries_id'], args['task_id'])
+    when 'set_task_priority'
+      set_task_priority(args['list_id'], args['taskseries_id'], args['task_id'], args['priority'])
+    when 'add_task_tags'
+      add_task_tags(args['list_id'], args['taskseries_id'], args['task_id'], args['tags'])
+    when 'remove_task_tags'
+      remove_task_tags(args['list_id'], args['taskseries_id'], args['task_id'], args['tags'])
+    when 'archive_list'
+      archive_list(args['list_id'])
+    when 'add_task_note'
+      add_task_note(args['list_id'], args['taskseries_id'], args['task_id'], args['title'], args['text'])
+    when 'edit_task_note'
+      edit_task_note(args['note_id'], args['title'], args['text'])
+    when 'delete_task_note'
+      delete_task_note(args['note_id'])
     else
-      {
-        jsonrpc: "2.0",
-        error: {
-          code: -32602,
-          message: "Unknown tool: #{tool_name}"
-        },
-        id: request['id']
-      }
+      return { error: { code: -32602, message: "Unknown tool: #{tool_name}" } }
     end
+    
+    { content: [{ type: 'text', text: result }] }
   end
   
-  def handle_test_connection(request, arguments)
+  def test_connection
     result = @rtm.call_method('rtm.test.echo', { test: 'hello' })
     
-    if result['error']
-      {
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: "RTM API Error: #{result['error']}"
-        },
-        id: request['id']
-      }
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
     else
-      {
-        jsonrpc: "2.0",
-        result: {
-          content: [
-            {
-              type: "text",
-              text: "✅ RTM API connection successful!\n\nResponse: #{JSON.pretty_generate(result)}"
-            }
-          ]
-        },
-        id: request['id']
-      }
+      "✅ RTM API connection successful!\n\nResponse: #{JSON.pretty_generate(result)}"
     end
   end
   
-  def handle_list_all_lists(request, arguments)
+  def list_all_lists
     result = @rtm.call_method('rtm.lists.getList')
     
-    if result['error']
-      {
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: "RTM API Error: #{result['error']}"
-        },
-        id: request['id']
-      }
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
     else
       lists = result.dig('rsp', 'lists', 'list') || []
       lists = [lists] unless lists.is_a?(Array)  # Handle single list case
@@ -384,181 +511,81 @@ class RTMMCPServer
         (list['smart'] == '1' ? ' [smart]' : '')
       end.join("\n")
       
-      {
-        jsonrpc: "2.0",
-        result: {
-          content: [
-            {
-              type: "text",
-              text: "📝 RTM Lists:\n\n#{list_text}"
-            }
-          ]
-        },
-        id: request['id']
-      }
+      "📝 RTM Lists:\n\n#{list_text}"
     end
   end
   
-  def handle_create_list(request, arguments)
-    name = arguments['name']
-    
-    unless name && !name.empty?
-      return {
-        jsonrpc: "2.0",
-        error: {
-          code: -32602,
-          message: "List name is required"
-        },
-        id: request['id']
-      }
-    end
+  def create_list(name)
+    return "Error: List name is required" unless name && !name.empty?
     
     result = @rtm.call_method('rtm.lists.add', { name: name })
     
-    if result['error']
-      {
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: "RTM API Error: #{result['error']}"
-        },
-        id: request['id']
-      }
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
     else
       list = result.dig('rsp', 'list')
       if list
-        {
-          jsonrpc: "2.0",
-          result: {
-            content: [
-              {
-                type: "text",
-                text: "✅ Created list: #{list['name']} (ID: #{list['id']})"
-              }
-            ]
-          },
-          id: request['id']
-        }
+        "✅ Created list: #{list['name']} (ID: #{list['id']})"
       else
-        {
-          jsonrpc: "2.0",
-          error: {
-            code: -32603,
-            message: "List created but couldn't parse response"
-          },
-          id: request['id']
-        }
+        "❌ List created but couldn't parse response"
       end
     end
   end
   
-  def handle_list_tasks(request, arguments)
-    list_id = arguments['list_id']
-    filter = arguments['filter']
-    
-    params = {}
+  def list_tasks(list_id = nil, filter = nil)
+    params = { v: '2' }  # Use API v2 to get parent_task_id fields
     params[:list_id] = list_id if list_id
     params[:filter] = filter if filter && !filter.empty?
     
     result = @rtm.call_method('rtm.tasks.getList', params)
     
-    if result['error']
-      {
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: "RTM API Error: #{result['error']}"
-        },
-        id: request['id']
-      }
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
     else
-      tasks_text = format_tasks(result)
-      {
-        jsonrpc: "2.0",
-        result: {
-          content: [
-            {
-              type: "text",
-              text: tasks_text
-            }
-          ]
-        },
-        id: request['id']
-      }
+      # Get list of parent task IDs (tasks that have subtasks)
+      parent_task_ids = get_parent_task_ids(list_id, filter)
+      format_tasks(result, parent_task_ids)
     end
   end
   
-  def handle_create_task(request, arguments)
-    name = arguments['name']
-    list_id = arguments['list_id']
-    
-    unless name && !name.empty?
-      return {
-        jsonrpc: "2.0",
-        error: {
-          code: -32602,
-          message: "Task name is required"
-        },
-        id: request['id']
-      }
-    end
+  def create_task(name, list_id = nil)
+    return "Error: Task name is required" unless name && !name.empty?
     
     params = { name: name }
     params[:list_id] = list_id if list_id
     
     result = @rtm.call_method('rtm.tasks.add', params)
     
-    if result['error']
-      {
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: "RTM API Error: #{result['error']}"
-        },
-        id: request['id']
-      }
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
     else
-      task = result.dig('rsp', 'list', 'taskseries')
-      if task
-        {
-          jsonrpc: "2.0",
-          result: {
-            content: [
-              {
-                type: "text",
-                text: "✅ Created task: #{task['name']} (ID: #{task['id']})"
-              }
-            ]
-          },
-          id: request['id']
-        }
+      # RTM returns the task in a list structure
+      list = result.dig('rsp', 'list')
+      taskseries = list&.dig('taskseries')
+      
+      # Handle case where taskseries is an array
+      if taskseries.is_a?(Array)
+        task = taskseries.first
       else
-        {
-          jsonrpc: "2.0",
-          error: {
-            code: -32603,
-            message: "Task created but couldn't parse response"
-          },
-          id: request['id']
-        }
+        task = taskseries
+      end
+      
+      if task
+        task_name = task['name'] || name
+        list_name = list['name'] || 'Unknown list'
+        "✅ Created task: #{task_name} in #{list_name}"
+      else
+        "❌ Task created but couldn't parse response"
       end
     end
   end
   
-  def handle_complete_task(request, arguments)
-    list_id = arguments['list_id']
-    taskseries_id = arguments['taskseries_id']
-    task_id = arguments['task_id']
-    
+  def complete_task(list_id, taskseries_id, task_id)
     unless list_id && taskseries_id && task_id
-      return {
-        jsonrpc: "2.0",
-        error: {
-          code: -32602,
-          message: "list_id, taskseries_id, and task_id are required"
-        },
-        id: request['id']
-      }
+      return "Error: list_id, taskseries_id, and task_id are required"
     end
     
     params = {
@@ -569,34 +596,287 @@ class RTMMCPServer
     
     result = @rtm.call_method('rtm.tasks.complete', params)
     
-    if result['error']
-      {
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: "RTM API Error: #{result['error']}"
-        },
-        id: request['id']
-      }
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
     else
-      {
-        jsonrpc: "2.0",
-        result: {
-          content: [
-            {
-              type: "text",
-              text: "✅ Task completed successfully!"
-            }
-          ]
-        },
-        id: request['id']
-      }
+      "✅ Task completed successfully!"
+    end
+  end
+  
+  def set_task_priority(list_id, taskseries_id, task_id, priority)
+    unless list_id && taskseries_id && task_id && priority != nil
+      return "Error: list_id, taskseries_id, task_id, and priority are required"
+    end
+    
+    # Validate priority value
+    unless ['1', '2', '3', ''].include?(priority)
+      return "Error: Priority must be '1' (High), '2' (Medium), '3' (Low), or '' (None)"
+    end
+    
+    params = {
+      list_id: list_id,
+      taskseries_id: taskseries_id,
+      task_id: task_id,
+      priority: priority
+    }
+    
+    result = @rtm.call_method('rtm.tasks.setPriority', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
+    else
+      # Extract priority from response
+      list_data = result.dig('rsp', 'list')
+      if list_data
+        list_data = list_data.first if list_data.is_a?(Array)
+        
+        taskseries = list_data['taskseries']
+        if taskseries
+          taskseries = taskseries.first if taskseries.is_a?(Array)
+          task = taskseries['task']
+          task = task.first if task.is_a?(Array)
+          
+          priority_display = case task['priority']
+          when '1' then '🔴 High'
+          when '2' then '🟡 Medium'
+          when '3' then '🔵 Low'
+          when 'N' then 'None'
+          else task['priority']
+          end
+          
+          "✅ Task priority set to: #{priority_display}"
+        else
+          "✅ Task priority updated successfully!"
+        end
+      else
+        "✅ Task priority updated successfully!"
+      end
+    end
+  end
+  
+  def add_task_tags(list_id, taskseries_id, task_id, tags)
+    unless list_id && taskseries_id && task_id && tags && !tags.empty?
+      return "Error: list_id, taskseries_id, task_id, and tags are required"
+    end
+    
+    params = {
+      list_id: list_id,
+      taskseries_id: taskseries_id,
+      task_id: task_id,
+      tags: tags
+    }
+    
+    result = @rtm.call_method('rtm.tasks.addTags', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
+    else
+      # Extract tags from response
+      list_data = result.dig('rsp', 'list')
+      if list_data
+        list_data = list_data.first if list_data.is_a?(Array)
+        
+        taskseries = list_data['taskseries']
+        if taskseries
+          taskseries = taskseries.first if taskseries.is_a?(Array)
+          
+          tags_data = []
+          if taskseries['tags']
+            if taskseries['tags'].is_a?(Array)
+              tags_data = taskseries['tags']
+            elsif taskseries['tags'].is_a?(Hash) && taskseries['tags']['tag']
+              tag_array = taskseries['tags']['tag']
+              tags_data = tag_array.is_a?(Array) ? tag_array : [tag_array]
+            end
+          end
+          
+          tag_display = tags_data.empty? ? "none" : tags_data.join(", ")
+          "✅ Tags added! Current tags: #{tag_display}"
+        else
+          "✅ Tags added successfully!"
+        end
+      else
+        "✅ Tags added successfully!"
+      end
+    end
+  end
+  
+  def remove_task_tags(list_id, taskseries_id, task_id, tags)
+    unless list_id && taskseries_id && task_id && tags && !tags.empty?
+      return "Error: list_id, taskseries_id, task_id, and tags are required"
+    end
+    
+    params = {
+      list_id: list_id,
+      taskseries_id: taskseries_id,
+      task_id: task_id,
+      tags: tags
+    }
+    
+    result = @rtm.call_method('rtm.tasks.removeTags', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
+    else
+      # Extract remaining tags from response
+      list_data = result.dig('rsp', 'list')
+      if list_data
+        list_data = list_data.first if list_data.is_a?(Array)
+        
+        taskseries = list_data['taskseries']
+        if taskseries
+          taskseries = taskseries.first if taskseries.is_a?(Array)
+          
+          tags_data = []
+          if taskseries['tags']
+            if taskseries['tags'].is_a?(Array)
+              tags_data = taskseries['tags']
+            elsif taskseries['tags'].is_a?(Hash) && taskseries['tags']['tag']
+              tag_array = taskseries['tags']['tag']
+              tags_data = tag_array.is_a?(Array) ? tag_array : [tag_array]
+            end
+          end
+          
+          tag_display = tags_data.empty? ? "none" : tags_data.join(", ")
+          "✅ Tags removed! Current tags: #{tag_display}"
+        else
+          "✅ Tags removed successfully!"
+        end
+      else
+        "✅ Tags removed successfully!"
+      end
+    end
+  end
+  
+  def archive_list(list_id)
+    return "Error: List ID is required" unless list_id && !list_id.empty?
+    
+    result = @rtm.call_method('rtm.lists.archive', { list_id: list_id })
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
+    else
+      list = result.dig('rsp', 'list')
+      if list
+        "✅ Archived list: #{list['name']} (ID: #{list['id']})"
+      else
+        "✅ List archived successfully!"
+      end
+    end
+  end
+  
+  def add_task_note(list_id, taskseries_id, task_id, title, text)
+    return "Error: List ID, taskseries ID, task ID and text are required" unless list_id && taskseries_id && task_id && text
+    
+    params = {
+      list_id: list_id,
+      taskseries_id: taskseries_id,
+      task_id: task_id,
+      note_text: text
+    }
+    params[:note_title] = title if title && !title.empty?
+    
+    result = @rtm.call_method('rtm.tasks.notes.add', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
+    else
+      note = result.dig('rsp', 'note')
+      if note
+        title_display = note['title'] && !note['title'].empty? ? note['title'] : '(No title)'
+        text_preview = note['$t'] ? note['$t'].split("\n").first[0..50] : ''
+        text_preview += '...' if note['$t'] && note['$t'].length > 50
+        
+        "✅ Note added successfully!\n📝 Title: #{title_display}\n📄 Text: #{text_preview}\n🆔 Note ID: #{note['id']}"
+      else
+        "✅ Note added successfully!"
+      end
+    end
+  end
+  
+  def edit_task_note(note_id, title, text)
+    return "Error: Note ID and text are required" unless note_id && text
+    
+    params = {
+      note_id: note_id,
+      note_text: text
+    }
+    params[:note_title] = title if title && !title.empty?
+    
+    result = @rtm.call_method('rtm.tasks.notes.edit', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
+    else
+      note = result.dig('rsp', 'note')
+      if note
+        title_display = note['title'] && !note['title'].empty? ? note['title'] : '(No title)'
+        text_preview = note['$t'] ? note['$t'].split("\n").first[0..50] : ''
+        text_preview += '...' if note['$t'] && note['$t'].length > 50
+        
+        "✅ Note updated successfully!\n📝 Title: #{title_display}\n📄 Text: #{text_preview}"
+      else
+        "✅ Note updated successfully!"
+      end
+    end
+  end
+  
+  def delete_task_note(note_id)
+    return "Error: Note ID is required" unless note_id && !note_id.empty?
+    
+    result = @rtm.call_method('rtm.tasks.notes.delete', { note_id: note_id })
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
+      "❌ RTM API Error: #{error_msg}"
+    else
+      "✅ Note deleted successfully!"
     end
   end
   
   private
   
-  def format_tasks(result)
+  def get_parent_task_ids(list_id = nil, original_filter = nil)
+    # Build filter to find tasks with subtasks
+    parent_filter = 'hasSubtasks:true'
+    
+    # Add status:incomplete if the original filter had it
+    if original_filter && original_filter.include?('status:incomplete')
+      parent_filter += ' AND status:incomplete'
+    end
+    
+    params = { filter: parent_filter }
+    params[:list_id] = list_id if list_id
+    
+    result = @rtm.call_method('rtm.tasks.getList', params)
+    
+    parent_ids = []
+    if result.dig('rsp', 'stat') == 'ok'
+      lists = result.dig('rsp', 'tasks', 'list')
+      lists = [lists] unless lists.is_a?(Array) || lists.nil?
+      
+      lists&.each do |list|
+        next unless list['taskseries']
+        taskseries = list['taskseries']
+        taskseries = [taskseries] unless taskseries.is_a?(Array)
+        
+        taskseries.each do |ts|
+          parent_ids << ts['id']
+        end
+      end
+    end
+    
+    parent_ids
+  end
+  
+  def format_tasks(result, parent_task_ids = [])
     lists = result.dig('rsp', 'tasks', 'list')
     return "📋 No tasks found." unless lists
     
@@ -617,7 +897,7 @@ class RTMMCPServer
         task = [task] unless task.is_a?(Array)
         
         task.each do |t|
-          next if t['completed']  # Skip completed tasks
+          next if t['completed'] && !t['completed'].empty?  # Skip completed tasks
           
           status = "🔲"
           priority = case ts['priority']
@@ -627,18 +907,39 @@ class RTMMCPServer
                    else ""
                    end
           
-          due_text = t['due'] ? " (due: #{t['due']})" : ""
+          due_text = t['due'] && !t['due'].empty? ? " (due: #{t['due']})" : ""
           
-          list_tasks << "  #{status} #{ts['name']}#{priority}#{due_text}"
-          list_tasks << "    IDs: list=#{list['id']}, series=#{ts['id']}, task=#{t['id']}"
+          # Check if this task has subtasks
+          subtask_indicator = parent_task_ids.include?(ts['id']) ? " [has subtasks]" : ""
+          
+          list_tasks << "#{status} #{ts['name']}#{priority}#{due_text}#{subtask_indicator}"
+          
+          # Add notes if present
+          if ts['notes'] && ts['notes'].is_a?(Hash) && ts['notes']['note']
+            notes = ts['notes']['note']
+            notes = [notes] unless notes.is_a?(Array)
+            
+            notes.each do |note|
+              next unless note.is_a?(Hash)  # Skip if note isn't a hash
+              note_text = note['$t'] || note['text'] || ''
+              next if note_text.empty?
+              
+              # Truncate long notes and clean up newlines
+              if note_text.length > 80
+                note_text = note_text[0..77].gsub(/\n/, ' ') + "..."
+              else
+                note_text = note_text.gsub(/\n/, ' ')
+              end
+              list_tasks << "   📝 #{note_text}"
+            end
+          end
+          
           task_count += 1
         end
       end
       
       if list_tasks.any?
-        output << "📝 **#{list_name}**:"
         output.concat(list_tasks)
-        output << ""
       end
     end
     
@@ -650,8 +951,65 @@ class RTMMCPServer
   end
 end
 
-# Start the server if this file is run directly
+# Only run the server if this file is being executed directly
 if __FILE__ == $0
+  # Main loop
   server = RTMMCPServer.new
-  server.run
+  
+  STDERR.puts "RTM MCP Server starting..."
+  STDERR.flush
+  
+  while line = STDIN.gets
+    begin
+      request = JSON.parse(line)
+      
+      # Handle notifications (no response needed)
+      if request['method'] && request['method'].start_with?('notifications/')
+        server.handle_request(request)
+        next
+      end
+      
+      result = server.handle_request(request)
+      
+      # Only send response for requests with an id
+      if request['id']
+        response = {
+          jsonrpc: '2.0',
+          id: request['id']
+        }
+        
+        if result && result[:error]
+          response[:error] = result[:error]
+        elsif result
+          response[:result] = result
+        else
+          response[:result] = {}
+        end
+        
+        puts JSON.generate(response)
+        STDOUT.flush
+      end
+    rescue JSON::ParserError => e
+      STDERR.puts "Parse error: #{e.message}"
+      if request && request['id']
+        puts JSON.generate({
+          jsonrpc: '2.0',
+          id: request['id'],
+          error: { code: -32700, message: 'Parse error' }
+        })
+        STDOUT.flush
+      end
+    rescue => e
+      STDERR.puts "Error: #{e.message}"
+      STDERR.puts e.backtrace
+      if request && request['id']
+        puts JSON.generate({
+          jsonrpc: '2.0',
+          id: request['id'],
+          error: { code: -32603, message: "Internal error: #{e.message}" }
+        })
+        STDOUT.flush
+      end
+    end
+  end
 end
