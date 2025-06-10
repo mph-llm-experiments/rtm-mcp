@@ -15,7 +15,6 @@ RUN bundle install --without development test
 
 # Copy application code
 COPY rtm-mcp.rb ./
-COPY README.md ./
 
 # Create non-root user for security
 RUN addgroup -g 1001 rtm && \
