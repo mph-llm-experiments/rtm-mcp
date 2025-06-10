@@ -10,6 +10,7 @@ source 'https://rubygems.org'
 # - optparse
 
 # HTTP server functionality
+gem 'webrick', '~> 1.8'     # HTTP server (removed from stdlib in Ruby 3+)
 gem 'sinatra', '~> 3.0'
 gem 'rack-cors', '~> 1.1'  # Use older version compatible with Sinatra
 
