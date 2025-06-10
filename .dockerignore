@@ -1,0 +1,30 @@
+# Git and version control
+.git
+.gitignore
+
+# Local credentials (these go via environment variables)
+.rtm_api_key
+.rtm_shared_secret
+.rtm_auth_token
+
+# Development files
+test-scripts/
+debug-*.rb
+simple-http-fix.rb
+
+# Documentation
+README.md
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+*~
+
+# Logs
+*.log
+
+# Ruby development
+.bundle/
+vendor/bundle

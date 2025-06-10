@@ -5,6 +5,10 @@ require 'net/http'
 require 'uri'
 require 'digest'
 require 'time'
+require 'optparse'
+
+# HTTP server mode uses WEBrick (always available in Ruby)
+HTTP_AVAILABLE = true
 
 # Rate limiter to respect RTM's API limits
 class RateLimiter
@@ -144,6 +148,12 @@ class RTMClient
   end
   
   def load_auth_token
+    # First try environment variable (for containerized deployment)
+    if ENV['RTM_AUTH_TOKEN'] && !ENV['RTM_AUTH_TOKEN'].empty?
+      return ENV['RTM_AUTH_TOKEN'].strip
+    end
+    
+    # Fall back to file-based token (for local development)
     token_file = File.join(__dir__, '.rtm_auth_token')
     return nil unless File.exist?(token_file)
     File.read(token_file).strip
@@ -160,15 +170,12 @@ class RTMClient
 end
 
 class RTMMCPServer
-  def initialize(auth_token = nil)
-    # Get credentials from command line arguments or environment
-    @api_key = ARGV[0] || ENV['RTM_API_KEY']
-    @shared_secret = ARGV[1] || ENV['RTM_SHARED_SECRET']
+  def initialize(api_key, shared_secret)
+    @api_key = api_key
+    @shared_secret = shared_secret
     
     unless @api_key && @shared_secret
-      STDERR.puts "Usage: #{$0} [api-key] [shared-secret]"
-      STDERR.puts "Or set RTM_API_KEY and RTM_SHARED_SECRET environment variables"
-      exit 1
+      raise "Missing RTM API credentials"
     end
     
     @rtm = RTMClient.new(@api_key, @shared_secret)
@@ -2001,12 +2008,8 @@ class RTMMCPServer
   end
 end
 
-# Only run the server if this file is being executed directly
-if __FILE__ == $0
-  # Main loop
-  server = RTMMCPServer.new
-  
-  STDERR.puts "RTM MCP Server starting..."
+def run_stdio_server(server)
+  STDERR.puts "RTM MCP Server starting in stdio mode..."
   STDERR.flush
   
   while line = STDIN.gets
@@ -2061,5 +2064,265 @@ if __FILE__ == $0
         STDOUT.flush
       end
     end
+  end
+end
+
+# Helper function for bearer token authentication
+def check_bearer_auth(request)
+  auth_token = ENV['RTM_MCP_AUTH_TOKEN']
+  
+  # If no auth token configured, allow all requests (backward compatibility)
+  return { valid: true } if !auth_token || auth_token.empty?
+  
+  # Check for Authorization header (WEBrick uses different access method)
+  auth_header = request['Authorization']
+  if !auth_header || auth_header.empty?
+    return { 
+      valid: false, 
+      status: 401,
+      error: 'Missing Authorization header',
+      www_authenticate: 'Bearer realm="RTM MCP Server"'
+    }
+  end
+  
+  # Parse Authorization header
+  if !auth_header.start_with?('Bearer ')
+    return { 
+      valid: false, 
+      status: 401,
+      error: 'Invalid authorization scheme. Expected Bearer token',
+      www_authenticate: 'Bearer realm="RTM MCP Server"'
+    }
+  end
+  
+  # Extract token
+  provided_token = auth_header[7..-1]  # Remove "Bearer " prefix
+  if provided_token.nil? || provided_token.empty?
+    return { 
+      valid: false, 
+      status: 401,
+      error: 'Missing bearer token',
+      www_authenticate: 'Bearer realm="RTM MCP Server"'
+    }
+  end
+  
+  # Validate token
+  if provided_token != auth_token
+    return { 
+      valid: false, 
+      status: 401,
+      error: 'Invalid bearer token',
+      www_authenticate: 'Bearer realm="RTM MCP Server"'
+    }
+  end
+  
+  # Token is valid
+  { valid: true }
+end
+
+def run_http_server(server, port)
+  unless HTTP_AVAILABLE
+    STDERR.puts "Error: HTTP transport not available"
+    STDERR.puts "Install rack gem or use stdio mode"
+    exit 1
+  end
+  
+  # Check for bearer token authentication
+  auth_token = ENV['RTM_MCP_AUTH_TOKEN']
+  if auth_token && !auth_token.empty?
+    STDERR.puts "RTM MCP Server starting in HTTP mode on port #{port} with authentication..."
+  else
+    STDERR.puts "RTM MCP Server starting in HTTP mode on port #{port} without authentication..."
+  end
+  STDERR.flush
+  
+  # Set global variable for the HTTP handler
+  $rtm_server = server
+  
+  # Use WEBrick directly (always available in Ruby)
+  require 'webrick'
+  require 'json'
+  
+  webrick_server = WEBrick::HTTPServer.new(
+    Port: port.to_i,
+    BindAddress: '0.0.0.0',
+    Logger: WEBrick::Log.new(STDERR, WEBrick::Log::ERROR),
+    AccessLog: []
+  )
+  
+  # Root endpoint
+  webrick_server.mount_proc '/' do |req, res|
+    res['Content-Type'] = 'text/plain'
+    res['Access-Control-Allow-Origin'] = '*'
+    res.body = "RTM MCP Server\n\nConnect to /sse for MCP over Server-Sent Events"
+  end
+  
+  # Health check endpoint for Docker
+  webrick_server.mount_proc '/health' do |req, res|
+    res['Content-Type'] = 'application/json'
+    res['Access-Control-Allow-Origin'] = '*'
+    res.status = 200
+    res.body = JSON.generate({
+      status: 'ok',
+      timestamp: Time.now.iso8601,
+      server: 'RTM MCP Server'
+    })
+  end
+  
+  # MCP JSON-RPC endpoint
+  webrick_server.mount_proc '/sse' do |req, res|
+    res['Access-Control-Allow-Origin'] = '*'
+    res['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    res['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    
+    if req.request_method == 'OPTIONS'
+      # CORS preflight
+      res.status = 200
+      res.body = ''
+      next
+    end
+    
+    if req.request_method != 'POST'
+      res.status = 405
+      res['Content-Type'] = 'text/plain'
+      res.body = 'Method Not Allowed'
+      next
+    end
+    
+    # Check bearer token authentication
+    auth_result = check_bearer_auth(req)
+    unless auth_result[:valid]
+      res.status = auth_result[:status]
+      res['Content-Type'] = 'application/json'
+      res['WWW-Authenticate'] = auth_result[:www_authenticate] if auth_result[:www_authenticate]
+      res.body = JSON.generate({
+        jsonrpc: '2.0',
+        id: nil,
+        error: { 
+          code: -32600, 
+          message: auth_result[:error] 
+        }
+      })
+      next
+    end
+    
+    begin
+      request_body = req.body
+      STDERR.puts "Received HTTP request: #{request_body}"
+      
+      request_data = JSON.parse(request_body)
+      result = $rtm_server.handle_request(request_data)
+      response = {
+        jsonrpc: '2.0',
+        id: request_data['id']
+      }
+      
+      if result && result[:error]
+        response[:error] = result[:error]
+      elsif result
+        response[:result] = result
+      else
+        response[:result] = {}
+      end
+      
+      res['Content-Type'] = 'application/json'
+      res.status = 200
+      res.body = JSON.generate(response)
+      
+    rescue JSON::ParserError => e
+      res['Content-Type'] = 'application/json'
+      res.status = 400
+      res.body = JSON.generate({
+        jsonrpc: '2.0',
+        id: nil,
+        error: { code: -32700, message: 'Parse error' }
+      })
+    rescue => e
+      STDERR.puts "HTTP error: #{e.message}"
+      res['Content-Type'] = 'application/json'
+      res.status = 500
+      res.body = JSON.generate({
+        jsonrpc: '2.0',
+        id: nil,
+        error: { code: -32603, message: "Internal error: #{e.message}" }
+      })
+    end
+  end
+  
+  # Graceful shutdown
+  trap('INT') { webrick_server.shutdown }
+  trap('TERM') { webrick_server.shutdown }
+  
+  STDERR.puts "WEBrick server starting on port #{port}..."
+  webrick_server.start
+end
+
+# Parse command line arguments
+def parse_arguments
+  options = {
+    transport: 'stdio',
+    port: 8080
+  }
+  
+  OptionParser.new do |opts|
+    opts.banner = "Usage: #{$0} [options] [api_key shared_secret]"
+    
+    opts.on('--transport TRANSPORT', ['stdio', 'http'], 
+            "Transport mode: stdio or http (default: stdio)#{HTTP_AVAILABLE ? '' : ' [http unavailable - install sinatra]'}") do |t|
+      options[:transport] = t
+    end
+    
+    opts.on('--port PORT', Integer, 
+            'HTTP port (default: 8080, only used with http transport)') do |p|
+      options[:port] = p
+    end
+    
+    opts.on('-h', '--help', 'Show this help message') do
+      puts opts
+      puts "\nCredentials can be provided via:"
+      puts "  Command line: #{$0} [options] api_key shared_secret"
+      puts "  Environment variables: RTM_API_KEY, RTM_SHARED_SECRET"
+      exit
+    end
+  end.parse!
+  
+  # Get API credentials from command line or environment variables
+  if ARGV.length >= 2
+    options[:api_key] = ARGV[0]
+    options[:shared_secret] = ARGV[1]
+  elsif ENV['RTM_API_KEY'] && ENV['RTM_SHARED_SECRET']
+    options[:api_key] = ENV['RTM_API_KEY']
+    options[:shared_secret] = ENV['RTM_SHARED_SECRET']
+  else
+    STDERR.puts "Error: Missing API credentials"
+    STDERR.puts "Provide via command line: #{$0} [options] api_key shared_secret"
+    STDERR.puts "Or environment variables: RTM_API_KEY, RTM_SHARED_SECRET"
+    exit 1
+  end
+  
+  options
+end
+# Main entry point
+if __FILE__ == $0
+  begin
+    options = parse_arguments
+    
+    # Initialize RTM server with credentials
+    server = RTMMCPServer.new(options[:api_key], options[:shared_secret])
+    
+    case options[:transport]
+    when 'stdio'
+      run_stdio_server(server)
+    when 'http'
+      run_http_server(server, options[:port])
+    else
+      STDERR.puts "Unknown transport mode: #{options[:transport]}"
+      exit 1
+    end
+    
+  rescue => e
+    STDERR.puts "Fatal error: #{e.message}"
+    STDERR.puts e.backtrace
+    exit 1
   end
 end
