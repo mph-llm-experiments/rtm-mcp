@@ -2152,7 +2152,7 @@ def run_http_server(server, port)
   
   # Root endpoint
   webrick_server.mount_proc '/' do |req, res|
-    res['Content-Type'] = 'text/plain'
+    res['Content-Type'] = 'text/plain; charset=utf-8'
     res['Access-Control-Allow-Origin'] = '*'
     res.body = "RTM MCP Server\nConnect to /sse for MCP over Server-Sent Events\nAuthentication: Authentication required - use Authorization: Bearer <token> header"
   end
