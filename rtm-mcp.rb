@@ -2177,7 +2177,10 @@ def run_http_server(server, port)
     res.body = JSON.generate({
       issuer: 'https://rtm.puddingtime.net',
       authorization_endpoint: 'https://rtm.puddingtime.net/oauth/authorize',
-      token_endpoint: 'https://rtm.puddingtime.net/oauth/token'
+      token_endpoint: 'https://rtm.puddingtime.net/oauth/token',
+      response_types_supported: ['code', 'token'],
+      grant_types_supported: ['authorization_code', 'implicit'],
+      token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post']
     })
   end
   
