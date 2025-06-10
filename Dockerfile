@@ -16,9 +16,9 @@ RUN bundle install --without development test
 # Copy application code
 COPY rtm-mcp.rb ./
 
-# Create non-root user for security
-RUN addgroup -g 1001 rtm && \
-    adduser -D -u 1001 -G rtm rtm
+# Create user to match Synology user (1026)
+RUN addgroup -g 1026 rtm && \
+    adduser -D -u 1026 -G rtm rtm
 
 # Set ownership
 RUN chown -R rtm:rtm /app
@@ -26,10 +26,10 @@ USER rtm
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8733/health || exit 1
 
 # Expose port
-EXPOSE 8080
+EXPOSE 8733
 
 # Start command
-CMD ["ruby", "rtm-mcp.rb", "--transport=http", "--port=8080"]
+CMD ["ruby", "rtm-mcp.rb", "--transport=http", "--port=8733"]

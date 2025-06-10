@@ -2261,7 +2261,7 @@ end
 def parse_arguments
   options = {
     transport: 'stdio',
-    port: 8080
+    port: 8733
   }
   
   OptionParser.new do |opts|
@@ -2273,7 +2273,7 @@ def parse_arguments
     end
     
     opts.on('--port PORT', Integer, 
-            'HTTP port (default: 8080, only used with http transport)') do |p|
+            'HTTP port (default: 8733, only used with http transport)') do |p|
       options[:port] = p
     end
     

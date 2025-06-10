@@ -4,7 +4,7 @@ services:
   rtm-mcp:
     build: .
     ports:
-      - "8080:8080"
+      - "8733:8733"
     environment:
       # RTM API credentials (set these in your environment or .env file)
       - RTM_API_KEY=${RTM_API_KEY}
@@ -14,7 +14,7 @@ services:
       - RTM_MCP_AUTH_TOKEN=${RTM_MCP_AUTH_TOKEN}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8733/health"]
       interval: 30s
       timeout: 10s
       retries: 3
