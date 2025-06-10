@@ -2169,31 +2169,6 @@ def run_http_server(server, port)
     })
   end
   
-  # OAuth discovery endpoints (minimal responses for mcp-remote compatibility)
-  webrick_server.mount_proc '/.well-known/oauth-authorization-server' do |req, res|
-    res['Content-Type'] = 'application/json'
-    res['Access-Control-Allow-Origin'] = '*'
-    res.status = 200
-    res.body = JSON.generate({
-      issuer: 'https://rtm.puddingtime.net',
-      authorization_endpoint: 'https://rtm.puddingtime.net/oauth/authorize',
-      token_endpoint: 'https://rtm.puddingtime.net/oauth/token',
-      response_types_supported: ['code', 'token'],
-      grant_types_supported: ['authorization_code', 'implicit'],
-      token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post']
-    })
-  end
-  
-  webrick_server.mount_proc '/.well-known/oauth-protected-resource' do |req, res|
-    res['Content-Type'] = 'application/json'
-    res['Access-Control-Allow-Origin'] = '*'
-    res.status = 200
-    res.body = JSON.generate({
-      resource: 'https://rtm.puddingtime.net/sse',
-      authorization_servers: ['https://rtm.puddingtime.net']
-    })
-  end
-  
   # MCP JSON-RPC endpoint
   webrick_server.mount_proc '/sse' do |req, res|
     res['Access-Control-Allow-Origin'] = '*'
