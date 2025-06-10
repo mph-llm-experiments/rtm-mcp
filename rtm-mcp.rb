@@ -2154,7 +2154,7 @@ def run_http_server(server, port)
   webrick_server.mount_proc '/' do |req, res|
     res['Content-Type'] = 'text/plain'
     res['Access-Control-Allow-Origin'] = '*'
-    res.body = "RTM MCP Server\n\nConnect to /sse for MCP over Server-Sent Events"
+    res.body = "RTM MCP Server\nConnect to /sse for MCP over Server-Sent Events\nAuthentication: Authentication required - use Authorization: Bearer <token> header"
   end
   
   # Health check endpoint for Docker
