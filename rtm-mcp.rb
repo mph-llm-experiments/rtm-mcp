@@ -237,7 +237,7 @@ class RTMMCPServer
       },
       {
         name: 'create_task',
-        description: 'Create a new task in RTM',
+        description: 'Create a new task in RTM with optional due date, priority, and tags',
         inputSchema: {
           type: 'object',
           properties: {
@@ -248,6 +248,19 @@ class RTMMCPServer
             list_id: {
               type: 'string',
               description: 'List ID to create task in (optional, uses default list if not specified)'
+            },
+            due: {
+              type: 'string',
+              description: 'Due date (optional, e.g., "today", "tomorrow", "next week", "June 15", "2025-06-20", "3pm", "tomorrow at 2pm")'
+            },
+            priority: {
+              type: 'string',
+              description: 'Priority level: 1 (High), 2 (Medium), 3 (Low), or empty string (None) (optional)',
+              enum: ['1', '2', '3', '']
+            },
+            tags: {
+              type: 'string',
+              description: 'Comma-separated list of tags to add (optional)'
             }
           },
           required: ['name']
@@ -764,7 +777,7 @@ class RTMMCPServer
     when 'list_tasks'
       list_tasks(args['list_id'], args['filter'], args['show_ids'])
     when 'create_task'
-      create_task(args['name'], args['list_id'])
+      create_task(args['name'], args['list_id'], args['due'], args['priority'], args['tags'])
     when 'complete_task'
       complete_task(args['list_id'], args['taskseries_id'], args['task_id'])
     when 'delete_task'
@@ -982,40 +995,91 @@ class RTMMCPServer
     "Unknown List"
   end
   
-  def create_task(name, list_id = nil)
+  def create_task(name, list_id = nil, due = nil, priority = nil, tags = nil)
     return "Error: Task name is required" unless name && !name.empty?
     
+    # Step 1: Create the basic task
     params = { name: name }
-    params[:list_id] = list_id if list_id
+    params[:list_id] = list_id if list_id && !list_id.empty?
     
     result = @rtm.call_method('rtm.tasks.add', params)
     
     if result['error'] || result.dig('rsp', 'stat') == 'fail'
       error_msg = result['error'] || result.dig('rsp', 'err', 'msg') || 'Unknown error'
-      "❌ RTM API Error: #{error_msg}"
+      return "❌ RTM API Error: #{error_msg}"
+    end
+    
+    # Extract the created task info
+    list = result.dig('rsp', 'list')
+    taskseries = list&.dig('taskseries')
+    
+    # Handle case where taskseries is an array
+    if taskseries.is_a?(Array)
+      task = taskseries.first
     else
-      # RTM returns the task in a list structure
-      list = result.dig('rsp', 'list')
-      taskseries = list&.dig('taskseries')
-      
-      # Handle case where taskseries is an array
-      if taskseries.is_a?(Array)
-        task = taskseries.first
+      task = taskseries
+    end
+    
+    if !task
+      return "❌ Task created but couldn't parse response"
+    end
+    
+    task_name = task['name'] || name
+    actual_list_id = list['id']
+    list_name = get_list_name(actual_list_id)
+    task_obj = task['task']
+    task_id = task_obj.is_a?(Array) ? task_obj[0]['id'] : task_obj['id']
+    
+    # Step 2: Set metadata via separate API calls if provided
+    metadata_results = []
+    
+    # Set due date
+    if due && !due.empty?
+      sleep 1  # Rate limiting
+      due_result = set_due_date(actual_list_id, task['id'], task_id, due)
+      if due_result.start_with?("✅")
+        metadata_results << "📅 Due date set"
       else
-        task = taskseries
-      end
-      
-      if task
-        task_name = task['name'] || name
-        # Get the correct list name using the list ID from the response
-        actual_list_id = list['id']
-        list_name = get_list_name(actual_list_id)
-        task_id = task['task'].is_a?(Array) ? task['task'][0]['id'] : task['task']['id']
-        "✅ Created task: #{task_name} in #{list_name}\n   IDs: list=#{actual_list_id}, series=#{task['id']}, task=#{task_id}"
-      else
-        "❌ Task created but couldn't parse response"
+        metadata_results << "⚠️ Due date failed: #{due_result}"
       end
     end
+    
+    # Set priority
+    if priority && !priority.empty?
+      sleep 1  # Rate limiting
+      priority_result = set_task_priority(actual_list_id, task['id'], task_id, priority)
+      if priority_result.start_with?("✅")
+        priority_display = case priority
+        when '1' then '🔴 High'
+        when '2' then '🟡 Medium'  
+        when '3' then '🔵 Low'
+        else priority
+        end
+        metadata_results << "Priority: #{priority_display}"
+      else
+        metadata_results << "⚠️ Priority failed: #{priority_result}"
+      end
+    end
+    
+    # Set tags
+    if tags && !tags.empty?
+      sleep 1  # Rate limiting
+      tags_result = add_task_tags(actual_list_id, task['id'], task_id, tags)
+      if tags_result.start_with?("✅")
+        metadata_results << "🏷️ Tags: #{tags}"
+      else
+        metadata_results << "⚠️ Tags failed: #{tags_result}"
+      end
+    end
+    
+    # Build response
+    response = "✅ Created task: #{task_name} in #{list_name}\n   IDs: list=#{actual_list_id}, series=#{task['id']}, task=#{task_id}"
+    
+    if metadata_results.any?
+      response += "\n" + metadata_results.join("\n")
+    end
+    
+    response
   end
   
   def complete_task(list_id, taskseries_id, task_id)
