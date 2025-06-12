@@ -760,14 +760,15 @@ class RTMMCPServer
           version: '0.1.0'
         },
         # Include tools directly in response for Web Claude
-        tools: @tools,
+        tools: @tools
         # Auth info at top level of response
-        auth: {
-          type: "oauth2",
-          authorization_url: "https://#{cf_team}/cdn-cgi/access/authorize",
-          token_url: "https://#{cf_team}/cdn-cgi/access/token",
-          scopes: ["email"]
-        }
+        # TEMPORARILY COMMENTED OUT FOR TESTING
+        # auth: {
+        #   type: "oauth2",
+        #   authorization_url: "https://#{cf_team}/cdn-cgi/access/authorize",
+        #   token_url: "https://#{cf_team}/cdn-cgi/access/token",
+        #   scopes: ["email"]
+        # }
       }
     when 'tools/list'
       { tools: @tools }
@@ -2329,24 +2330,28 @@ def run_http_server(server, port)
       request_data = JSON.parse(request_body)
       
       # Allow initialize method without authentication so Web Claude can discover OAuth
-      if request_data['method'] != 'initialize'
-        # Check bearer token authentication for all other methods
-        auth_result = check_bearer_auth(req)
-        unless auth_result[:valid]
-          res.status = auth_result[:status]
-          res['Content-Type'] = 'application/json'
-          res['WWW-Authenticate'] = auth_result[:www_authenticate] if auth_result[:www_authenticate]
-          res.body = JSON.generate({
-            jsonrpc: '2.0',
-            id: request_data['id'],
-            error: { 
-              code: -32600, 
-              message: auth_result[:error] 
-            }
-          })
-          next
-        end
-      end
+      # TEMPORARILY COMMENTED OUT FOR TESTING
+      # if request_data['method'] != 'initialize'
+      #   # Check bearer token authentication for all other methods
+      #   auth_result = check_bearer_auth(req)
+      #   unless auth_result[:valid]
+      #     res['Access-Control-Allow-Origin'] = '*'  # Ensure CORS on error
+      #     res['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+      #     res['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+      #     res.status = auth_result[:status]
+      #     res['Content-Type'] = 'application/json'
+      #     res['WWW-Authenticate'] = auth_result[:www_authenticate] if auth_result[:www_authenticate]
+      #     res.body = JSON.generate({
+      #       jsonrpc: '2.0',
+      #       id: request_data['id'],
+      #       error: { 
+      #         code: -32600, 
+      #         message: auth_result[:error] 
+      #       }
+      #     })
+      #     next
+      #   end
+      # end
       result = $rtm_server.handle_request(request_data)
       response = {
         jsonrpc: '2.0',
@@ -2366,6 +2371,9 @@ def run_http_server(server, port)
       res.body = JSON.generate(response)
       
     rescue JSON::ParserError => e
+      res['Access-Control-Allow-Origin'] = '*'  # Ensure CORS on error
+      res['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+      res['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
       res['Content-Type'] = 'application/json'
       res.status = 400
       res.body = JSON.generate({
@@ -2375,6 +2383,9 @@ def run_http_server(server, port)
       })
     rescue => e
       STDERR.puts "HTTP error: #{e.message}"
+      res['Access-Control-Allow-Origin'] = '*'  # Ensure CORS on error
+      res['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+      res['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
       res['Content-Type'] = 'application/json'
       res.status = 500
       res.body = JSON.generate({
