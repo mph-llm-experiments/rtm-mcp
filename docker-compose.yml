@@ -12,6 +12,7 @@ services:
       - RTM_AUTH_TOKEN=${RTM_AUTH_TOKEN}
       # MCP Bearer token for authentication
       - RTM_MCP_AUTH_TOKEN=${RTM_MCP_AUTH_TOKEN}
+      - CF_ACCESS_TEAM_DOMAIN=puddingnet.cloudflareaccess.com
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8733/health"]
