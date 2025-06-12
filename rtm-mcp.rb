@@ -1096,11 +1096,16 @@ class RTMMCPServer
     end
     
     # Check if tags were applied
-    if task['tags'] && task['tags']['tag']
-      applied_tags = task['tags']['tag']
-      applied_tags = [applied_tags] unless applied_tags.is_a?(Array)
-      if applied_tags.any?
-        metadata_applied << "🏷️ Tags: #{applied_tags.join(', ')}"
+    if task['tags']
+      if task['tags'].is_a?(Hash) && task['tags']['tag']
+        applied_tags = task['tags']['tag']
+        applied_tags = [applied_tags] unless applied_tags.is_a?(Array)
+        if applied_tags.any?
+          metadata_applied << "🏷️ Tags: #{applied_tags.join(', ')}"
+        end
+      elsif task['tags'].is_a?(Array) && task['tags'].any?
+        # Handle case where tags is returned as an array
+        metadata_applied << "🏷️ Tags: #{task['tags'].join(', ')}"
       end
     end
     
