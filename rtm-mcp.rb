@@ -2322,28 +2322,27 @@ def run_http_server(server, port)
       request_data = JSON.parse(request_body)
       
       # Allow initialize method without authentication so Web Claude can discover OAuth
-      # TEMPORARILY COMMENTED OUT FOR TESTING
-      # if request_data['method'] != 'initialize'
-      #   # Check bearer token authentication for all other methods
-      #   auth_result = check_bearer_auth(req)
-      #   unless auth_result[:valid]
-      #     res['Access-Control-Allow-Origin'] = '*'  # Ensure CORS on error
-      #     res['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-      #     res['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-      #     res.status = auth_result[:status]
-      #     res['Content-Type'] = 'application/json'
-      #     res['WWW-Authenticate'] = auth_result[:www_authenticate] if auth_result[:www_authenticate]
-      #     res.body = JSON.generate({
-      #       jsonrpc: '2.0',
-      #       id: request_data['id'],
-      #       error: { 
-      #         code: -32600, 
-      #         message: auth_result[:error] 
-      #       }
-      #     })
-      #     next
-      #   end
-      # end
+      if request_data['method'] != 'initialize'
+        # Check bearer token authentication for all other methods
+        auth_result = check_bearer_auth(req)
+        unless auth_result[:valid]
+          res['Access-Control-Allow-Origin'] = '*'  # Ensure CORS on error
+          res['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+          res['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+          res.status = auth_result[:status]
+          res['Content-Type'] = 'application/json'
+          res['WWW-Authenticate'] = auth_result[:www_authenticate] if auth_result[:www_authenticate]
+          res.body = JSON.generate({
+            jsonrpc: '2.0',
+            id: request_data['id'],
+            error: { 
+              code: -32600, 
+              message: auth_result[:error] 
+            }
+          })
+          next
+        end
+      end
       result = $rtm_server.handle_request(request_data)
       response = {
         jsonrpc: '2.0',
