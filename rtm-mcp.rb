@@ -148,17 +148,8 @@ class RTMClient
   end
   
   def load_auth_token
-    # First try environment variable (for containerized deployment)
-    if ENV['RTM_AUTH_TOKEN'] && !ENV['RTM_AUTH_TOKEN'].empty?
-      return ENV['RTM_AUTH_TOKEN'].strip
-    end
-    
-    # Fall back to file-based token (for local development)
-    token_file = File.join(__dir__, '.rtm_auth_token')
-    return nil unless File.exist?(token_file)
-    File.read(token_file).strip
-  rescue
-    nil
+    config = load_config
+    config['RTM_AUTH_TOKEN']
   end
   
   def generate_signature(params)
@@ -2395,6 +2386,35 @@ def run_http_server(server, port)
   webrick_server.start
 end
 
+# Load config from file and environment
+def load_config
+  config = {}
+  
+  # First try config file
+  config_file = File.expand_path('~/.config/rtm-mcp/config')
+  if File.exist?(config_file)
+    File.readlines(config_file).each do |line|
+      line = line.strip
+      next if line.empty? || line.start_with?('#')
+      
+      if line.include?('=')
+        key, value = line.split('=', 2)
+        config[key.strip] = value.strip
+      end
+    end
+  end
+  
+  # Environment variables override config file
+  config['RTM_API_KEY'] = ENV['RTM_API_KEY'] if ENV['RTM_API_KEY'] && !ENV['RTM_API_KEY'].empty?
+  config['RTM_SHARED_SECRET'] = ENV['RTM_SHARED_SECRET'] if ENV['RTM_SHARED_SECRET'] && !ENV['RTM_SHARED_SECRET'].empty?
+  config['RTM_AUTH_TOKEN'] = ENV['RTM_AUTH_TOKEN'] if ENV['RTM_AUTH_TOKEN'] && !ENV['RTM_AUTH_TOKEN'].empty?
+  
+  config
+rescue => e
+  STDERR.puts "Warning: Error loading config: #{e.message}"
+  {}
+end
+
 # Parse command line arguments
 def parse_arguments
   options = {
@@ -2418,23 +2438,30 @@ def parse_arguments
     opts.on('-h', '--help', 'Show this help message') do
       puts opts
       puts "\nCredentials can be provided via:"
-      puts "  Command line: #{$0} [options] api_key shared_secret"
+      puts "  Config file: ~/.config/rtm-mcp/config"
       puts "  Environment variables: RTM_API_KEY, RTM_SHARED_SECRET"
+      puts "  Command line: #{$0} [options] api_key shared_secret"
       exit
     end
   end.parse!
   
-  # Get API credentials from command line or environment variables
+  # Get API credentials with priority: command line > environment > config file
   if ARGV.length >= 2
     options[:api_key] = ARGV[0]
     options[:shared_secret] = ARGV[1]
-  elsif ENV['RTM_API_KEY'] && ENV['RTM_SHARED_SECRET']
-    options[:api_key] = ENV['RTM_API_KEY']
-    options[:shared_secret] = ENV['RTM_SHARED_SECRET']
   else
+    config = load_config
+    options[:api_key] = config['RTM_API_KEY']
+    options[:shared_secret] = config['RTM_SHARED_SECRET']
+  end
+  
+  # Validate that we have credentials
+  unless options[:api_key] && options[:shared_secret]
     STDERR.puts "Error: Missing API credentials"
-    STDERR.puts "Provide via command line: #{$0} [options] api_key shared_secret"
-    STDERR.puts "Or environment variables: RTM_API_KEY, RTM_SHARED_SECRET"
+    STDERR.puts ""
+    STDERR.puts "Create config file: ~/.config/rtm-mcp/config"
+    STDERR.puts "Or use environment variables: RTM_API_KEY, RTM_SHARED_SECRET"
+    STDERR.puts "Or provide via command line: #{$0} [options] api_key shared_secret"
     exit 1
   end
   

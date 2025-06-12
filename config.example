@@ -1,0 +1,11 @@
+# RTM MCP Configuration File
+# Copy this to ~/.config/rtm-mcp/config and fill in your credentials
+
+# RTM API Credentials
+# Get these from https://www.rememberthemilk.com/services/api/keys.rtm
+RTM_API_KEY=your_rtm_api_key_here
+RTM_SHARED_SECRET=your_rtm_shared_secret_here
+
+# RTM Authentication Token
+# This is generated after OAuth authentication with RTM
+RTM_AUTH_TOKEN=your_rtm_auth_token_here

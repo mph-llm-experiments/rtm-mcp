@@ -47,6 +47,24 @@ This MCP server enables Claude to interact with Remember The Milk tasks, lists, 
 - URL metadata (not yet implemented)
 - Bulk/batch operations (not yet implemented)
 
+## Quick Setup
+
+```bash
+# 1. Get RTM API credentials from https://www.rememberthemilk.com/services/api/keys.rtm
+
+# 2. Set up config
+mkdir -p ~/.config/rtm-mcp
+cp config.example ~/.config/rtm-mcp/config
+# Edit ~/.config/rtm-mcp/config with your credentials
+
+# 3. Get auth token
+ruby test-scripts/rtm-auth-setup.rb your_api_key your_shared_secret
+# Add the returned auth token to your config file
+
+# 4. Add to Claude Desktop config
+# See detailed instructions below
+```
+
 ## Installation & Setup
 
 ### 1. Get RTM API Credentials
@@ -57,21 +75,38 @@ This MCP server enables Claude to interact with Remember The Milk tasks, lists, 
 
 ### 2. Set Up Authentication
 
-Create credential files in your project directory:
+Create your configuration file:
 
 ```bash
-# Store your credentials (these files are gitignored)
-echo "your_api_key_here" > .rtm_api_key
-echo "your_shared_secret_here" > .rtm_shared_secret
+# Create config directory
+mkdir -p ~/.config/rtm-mcp
+
+# Copy template and edit with your credentials
+cp config.example ~/.config/rtm-mcp/config
+```
+
+Edit `~/.config/rtm-mcp/config` with your RTM credentials:
+
+```bash
+# RTM MCP Configuration File
+
+# RTM API Credentials  
+# Get these from https://www.rememberthemilk.com/services/api/keys.rtm
+RTM_API_KEY=your_rtm_api_key_here
+RTM_SHARED_SECRET=your_rtm_shared_secret_here
+
+# RTM Authentication Token
+# This is generated after OAuth authentication with RTM
+RTM_AUTH_TOKEN=your_rtm_auth_token_here
 ```
 
 **Important**: You'll need to run the authentication setup script once to get your auth token:
 
 ```bash
-ruby test-scripts/rtm-auth-setup.rb $(cat .rtm_api_key) $(cat .rtm_shared_secret)
+ruby test-scripts/rtm-auth-setup.rb your_api_key your_shared_secret
 ```
 
-This will guide you through RTM's OAuth flow and create the `.rtm_auth_token` file.
+This will guide you through RTM's OAuth flow and show you the auth token to add to your config file.
 
 ### 3. Configure Claude Desktop
 
@@ -82,17 +117,15 @@ Add to your Claude Desktop MCP settings (`~/Library/Application Support/Claude/c
   "mcpServers": {
     "rtm-mcp": {
       "command": "ruby",
-      "args": [
-        "/path/to/your/rtm-mcp.rb",
-        "$(cat /path/to/your/.rtm_api_key)",
-        "$(cat /path/to/your/.rtm_shared_secret)"
-      ]
+      "args": ["/path/to/your/rtm-mcp.rb"]
     }
   }
 }
 ```
 
 Replace `/path/to/your/` with the actual path to your rtm-mcp directory.
+
+**Note**: Credentials are automatically loaded from `~/.config/rtm-mcp/config` - no need to specify them in the Claude config.
 
 ### 4. Restart Claude Desktop
 
@@ -114,10 +147,11 @@ Once configured, you can use natural language with Claude:
 ## Security Notes
 
 ### Credential Management
-- **API credentials are stored in separate files** (`.rtm_api_key`, `.rtm_shared_secret`, `.rtm_auth_token`)
-- **All credential files are gitignored** - they won't be committed to version control
+- **Configuration stored in** `~/.config/rtm-mcp/config` (standard user config location)
+- **Config file permissions**: Ensure only you can read it (`chmod 600 ~/.config/rtm-mcp/config`)
 - **Never commit API credentials** to any repository
 - **Regenerate credentials** if you suspect they've been compromised
+- **Alternative**: Use environment variables (`RTM_API_KEY`, `RTM_SHARED_SECRET`, `RTM_AUTH_TOKEN`) for deployment scenarios
 
 ### Access Permissions
 - The server has **full access** to your RTM account
@@ -165,20 +199,31 @@ Once configured, you can use natural language with Claude:
 rtm-mcp/
 ├── rtm-mcp.rb              # Main MCP server (production)
 ├── README.md               # This file
+├── config.example          # Configuration template
 ├── .gitignore             # Security configuration
-├── .rtm_api_key           # Your API key (gitignored)
-├── .rtm_shared_secret     # Your shared secret (gitignored)  
-├── .rtm_auth_token        # Generated auth token (gitignored)
 └── test-scripts/          # Development and testing scripts
     ├── test-connection.rb # Basic connectivity test
     ├── rtm-auth-setup.rb  # Initial authentication setup
+    ├── test-config-simple.rb # Test config loading
     └── [various other test scripts]
+
+# User configuration (created by you)
+~/.config/rtm-mcp/config   # Your RTM credentials
 ```
 
 ### Testing
-Run the basic connectivity test:
+Test your configuration and connectivity:
 ```bash
-ruby test-scripts/test-connection.rb $(cat .rtm_api_key) $(cat .rtm_shared_secret)
+# Test config loading
+ruby test-scripts/test-config-simple.rb
+
+# Test RTM connectivity
+ruby test-scripts/test-connection.rb
+```
+
+For environment variable testing:
+```bash
+RTM_API_KEY=your_key RTM_SHARED_SECRET=your_secret ruby test-scripts/test-config-simple.rb
 ```
 
 ### Contributing
@@ -206,9 +251,11 @@ When adding new features:
 - Verify MCP configuration file syntax
 
 **Authentication issues**
-- Re-run the auth setup script
-- Check that credential files contain correct values
+- Check config file exists: `ls -la ~/.config/rtm-mcp/config`
+- Test config loading: `ruby test-scripts/test-config-simple.rb`
+- Re-run the auth setup script to get a fresh auth token
 - Verify API key is active at RTM
+- Try environment variables as alternative: `RTM_API_KEY=... RTM_SHARED_SECRET=... ./rtm-mcp.rb`
 
 ### Getting Help
 
