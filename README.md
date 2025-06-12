@@ -151,17 +151,12 @@ Once configured, you can use natural language with Claude:
 
 ### RTM API Limitations
 1. **Subtask listing**: RTM API doesn't provide direct subtask enumeration (our implementation uses a workaround)
-2. **Bulk operations**: RTM API requires individual calls for each task operation
-3. **Pro features**: Some features (like subtasks) require RTM Pro subscription
+2. **Pro features**: Some features (like subtasks) require RTM Pro subscription
 
 ### Implementation Gaps
 1. **Location metadata**: Not yet implemented (RTM supports this)
 2. **URL metadata**: Not yet implemented (RTM supports this)
 3. **Smart Add parsing**: Uses basic task creation instead of RTM's Smart Add syntax
-
-### MCP Constraints
-1. **Tool restart requirement**: New tools require Claude Desktop restart to register
-2. **No persistent state**: Each MCP session starts fresh (uses RTM as source of truth)
 
 ## Development & Testing
 
