@@ -743,6 +743,58 @@ class RTMMCPServer
           },
           required: ['task_id']
         }
+      },
+      {
+        name: 'set_task_location',
+        description: 'Set or update the location for a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'List ID containing the task'
+            },
+            taskseries_id: {
+              type: 'string',
+              description: 'Task series ID'
+            },
+            task_id: {
+              type: 'string',
+              description: 'Task ID'
+            },
+            location: {
+              type: 'string',
+              description: 'Location text (e.g., "Portland, OR", "Home office") or empty string to clear'
+            }
+          },
+          required: ['list_id', 'taskseries_id', 'task_id', 'location']
+        }
+      },
+      {
+        name: 'set_task_url',
+        description: 'Set or update the URL for a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'List ID containing the task'
+            },
+            taskseries_id: {
+              type: 'string',
+              description: 'Task series ID'
+            },
+            task_id: {
+              type: 'string',
+              description: 'Task ID'
+            },
+            url: {
+              type: 'string',
+              description: 'URL (e.g., "https://example.com") or empty string to clear'
+            }
+          },
+          required: ['list_id', 'taskseries_id', 'task_id', 'url']
+        }
       }
     ]
   end  
@@ -838,6 +890,10 @@ class RTMMCPServer
       set_task_name(args['list_id'], args['taskseries_id'], args['task_id'], args['name'])
     when 'get_task_permalink'
       get_task_permalink(args['task_id'])
+    when 'set_task_location'
+      set_task_location(args['list_id'], args['taskseries_id'], args['task_id'], args['location'])
+    when 'set_task_url'
+      set_task_url(args['list_id'], args['taskseries_id'], args['task_id'], args['url'])
     else
       return { error: { code: -32602, message: "Unknown tool: #{tool_name}" } }
     end
@@ -1518,6 +1574,96 @@ class RTMMCPServer
     end
   end
 
+  def set_task_location(list_id, taskseries_id, task_id, location)
+    unless list_id && taskseries_id && task_id
+      return "Error: list_id, taskseries_id, and task_id are required"
+    end
+    
+    # location parameter can be empty string to clear
+    location ||= ""
+    
+    params = {
+      list_id: list_id,
+      taskseries_id: taskseries_id,
+      task_id: task_id,
+      location: location
+    }
+    
+    result = @rtm.call_method('rtm.tasks.setLocation', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
+      return "Error setting location: #{error_msg}"
+    end
+    
+    # Extract updated task info
+    list = result.dig('rsp', 'list')
+    taskseries = list&.dig('taskseries')
+    
+    if taskseries
+      # Handle taskseries being an array
+      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
+      task_name = ts['name']
+      
+      if location.empty?
+        "✅ Location cleared for: #{task_name}"
+      else
+        "✅ Location set for: #{task_name}\n📍 Location: #{location}"
+      end
+    else
+      if location.empty?
+        "✅ Location cleared successfully!"
+      else
+        "✅ Location set successfully!"
+      end
+    end
+  end
+
+  def set_task_url(list_id, taskseries_id, task_id, url)
+    unless list_id && taskseries_id && task_id
+      return "Error: list_id, taskseries_id, and task_id are required"
+    end
+    
+    # url parameter can be empty string to clear
+    url ||= ""
+    
+    params = {
+      list_id: list_id,
+      taskseries_id: taskseries_id,
+      task_id: task_id,
+      url: url
+    }
+    
+    result = @rtm.call_method('rtm.tasks.setURL', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
+      return "Error setting URL: #{error_msg}"
+    end
+    
+    # Extract updated task info
+    list = result.dig('rsp', 'list')
+    taskseries = list&.dig('taskseries')
+    
+    if taskseries
+      # Handle taskseries being an array
+      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
+      task_name = ts['name']
+      
+      if url.empty?
+        "✅ URL cleared for: #{task_name}"
+      else
+        "✅ URL set for: #{task_name}\n🔗 URL: #{url}"
+      end
+    else
+      if url.empty?
+        "✅ URL cleared successfully!"
+      else
+        "✅ URL set successfully!"
+      end
+    end
+  end
+
   def set_task_recurrence(list_id, taskseries_id, task_id, repeat)
     unless list_id && taskseries_id && task_id && repeat
       return "Error: list_id, taskseries_id, task_id, and repeat pattern are required"
@@ -2087,6 +2233,12 @@ class RTMMCPServer
           # Add estimate display
           estimate_text = t['estimate'] && !t['estimate'].empty? ? " ⏱️#{t['estimate']}" : ""
           
+          # Add location display
+          location_text = ts['location'] && !ts['location'].empty? ? " 📍#{ts['location']}" : ""
+          
+          # Add URL display  
+          url_text = ts['url'] && !ts['url'].empty? ? " 🔗#{ts['url']}" : ""
+          
           # Check if this task has subtasks
           subtask_indicator = parent_task_ids.include?(ts['id']) ? " [has subtasks]" : ""
           
@@ -2094,7 +2246,7 @@ class RTMMCPServer
           permalink = generate_rtm_permalink(t['id'])
           permalink_text = permalink ? " 🔗 #{permalink}" : ""
           
-          list_tasks << "#{status} #{ts['name']}#{priority}#{due_text}#{start_text}#{estimate_text}#{subtask_indicator}#{permalink_text}"
+          list_tasks << "#{status} #{ts['name']}#{priority}#{due_text}#{start_text}#{estimate_text}#{location_text}#{url_text}#{subtask_indicator}#{permalink_text}"
           
           # Add IDs if requested
           if show_ids
