@@ -729,6 +729,20 @@ class RTMMCPServer
           },
           required: ['list_id', 'taskseries_id', 'task_id', 'name']
         }
+      },
+      {
+        name: 'get_task_permalink',
+        description: 'Get the RTM web permalink for a specific task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            task_id: {
+              type: 'string',
+              description: 'Task ID to generate permalink for'
+            }
+          },
+          required: ['task_id']
+        }
       }
     ]
   end  
@@ -822,6 +836,8 @@ class RTMMCPServer
       set_task_estimate(args['list_id'], args['taskseries_id'], args['task_id'], args['estimate'])
     when 'set_task_name'
       set_task_name(args['list_id'], args['taskseries_id'], args['task_id'], args['name'])
+    when 'get_task_permalink'
+      get_task_permalink(args['task_id'])
     else
       return { error: { code: -32602, message: "Unknown tool: #{tool_name}" } }
     end
@@ -1490,6 +1506,17 @@ class RTMMCPServer
       "✅ Task renamed successfully!"
     end
   end
+  
+  def get_task_permalink(task_id)
+    return "Error: Task ID is required" unless task_id && !task_id.empty?
+    
+    permalink = generate_rtm_permalink(task_id)
+    if permalink
+      "🔗 RTM Permalink: #{permalink}\n\n📋 This link will open the task in Remember The Milk's web interface."
+    else
+      "❌ Could not generate permalink for task ID: #{task_id}"
+    end
+  end
 
   def set_task_recurrence(list_id, taskseries_id, task_id, repeat)
     unless list_id && taskseries_id && task_id && repeat
@@ -1983,6 +2010,11 @@ class RTMMCPServer
 
   private
   
+  def generate_rtm_permalink(task_id)
+    return nil if task_id.nil? || task_id.empty?
+    "https://www.rememberthemilk.com/app/#tasks/#{task_id}"
+  end
+  
   def get_parent_task_ids(list_id = nil, original_filter = nil)
     # Build filter to find tasks with subtasks
     parent_filter = 'hasSubtasks:true'
@@ -2058,7 +2090,11 @@ class RTMMCPServer
           # Check if this task has subtasks
           subtask_indicator = parent_task_ids.include?(ts['id']) ? " [has subtasks]" : ""
           
-          list_tasks << "#{status} #{ts['name']}#{priority}#{due_text}#{start_text}#{estimate_text}#{subtask_indicator}"
+          # Generate permalink
+          permalink = generate_rtm_permalink(t['id'])
+          permalink_text = permalink ? " 🔗 #{permalink}" : ""
+          
+          list_tasks << "#{status} #{ts['name']}#{priority}#{due_text}#{start_text}#{estimate_text}#{subtask_indicator}#{permalink_text}"
           
           # Add IDs if requested
           if show_ids
