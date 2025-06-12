@@ -744,9 +744,21 @@ class RTMMCPServer
   def handle_request(request)
     case request['method']
     when 'initialize'
+      # Get CF team domain from environment or use a placeholder
+      cf_team = ENV['CF_ACCESS_TEAM_DOMAIN'] || 'your-team.cloudflareaccess.com'
+      
       { 
         protocolVersion: '2024-11-05',
-        capabilities: { tools: {} },
+        capabilities: { 
+          tools: {},
+          # Add OAuth capability for Web Claude
+          auth: {
+            type: "oauth2",
+            authorization_url: "https://#{cf_team}/cdn-cgi/access/authorize",
+            token_url: "https://#{cf_team}/cdn-cgi/access/token",
+            scopes: ["email"]
+          }
+        },
         serverInfo: { name: 'rtm-mcp', version: '0.1.0' }
       }
     when 'tools/list'
@@ -998,8 +1010,37 @@ class RTMMCPServer
   def create_task(name, list_id = nil, due = nil, priority = nil, tags = nil)
     return "Error: Task name is required" unless name && !name.empty?
     
-    # Step 1: Create the basic task
-    params = { name: name }
+    # Build Smart Add text with all metadata in one string
+    smart_add_text = name.dup
+    
+    # Add due date to Smart Add text
+    if due && !due.empty?
+      smart_add_text += " ^#{due}"
+    end
+    
+    # Add priority to Smart Add text  
+    if priority && !priority.empty?
+      case priority
+      when '1'
+        smart_add_text += " !1"
+      when '2' 
+        smart_add_text += " !2"
+      when '3'
+        smart_add_text += " !3"
+      end
+    end
+    
+    # Add tags to Smart Add text
+    if tags && !tags.empty?
+      tag_list = tags.split(',').map(&:strip)
+      tag_list.each { |tag| smart_add_text += " ##{tag}" }
+    end
+    
+    # Create task using Smart Add with parse=1
+    params = { 
+      name: smart_add_text,
+      parse: 1  # Enable Smart Add parsing (integer, not string)
+    }
     params[:list_id] = list_id if list_id && !list_id.empty?
     
     result = @rtm.call_method('rtm.tasks.add', params)
@@ -1029,57 +1070,54 @@ class RTMMCPServer
     list_name = get_list_name(actual_list_id)
     task_obj = task['task']
     task_id = task_obj.is_a?(Array) ? task_obj[0]['id'] : task_obj['id']
+    taskseries_id = task['id']
     
-    # Step 2: Set metadata via separate API calls if provided
-    metadata_results = []
+    # Build response showing what was applied
+    response_parts = ["✅ Created task: #{task_name} in #{list_name}"]
+    response_parts << "   IDs: list=#{actual_list_id}, series=#{taskseries_id}, task=#{task_id}"
     
-    # Set due date
-    if due && !due.empty?
-      sleep 1  # Rate limiting
-      due_result = set_due_date(actual_list_id, task['id'], task_id, due)
-      if due_result.start_with?("✅")
-        metadata_results << "📅 Due date set"
-      else
-        metadata_results << "⚠️ Due date failed: #{due_result}"
+    # Show applied metadata by inspecting the created task
+    metadata_applied = []
+    
+    # Check if due date was applied
+    if task_obj.is_a?(Array)
+      first_task = task_obj[0]
+    else
+      first_task = task_obj
+    end
+    
+    if first_task['due'] && !first_task['due'].empty?
+      has_time = first_task['has_due_time'] == '1'
+      time_info = has_time ? " (includes time)" : " (date only)"
+      metadata_applied << "📅 Due: #{first_task['due']}#{time_info}"
+    end
+    
+    # Check if priority was applied
+    if first_task['priority'] && !first_task['priority'].empty? && first_task['priority'] != 'N'
+      priority_display = case first_task['priority']
+      when '1' then '🔴 High'
+      when '2' then '🟡 Medium'
+      when '3' then '🔵 Low'
+      else first_task['priority']
+      end
+      metadata_applied << "Priority: #{priority_display}"
+    end
+    
+    # Check if tags were applied
+    if task['tags'] && task['tags']['tag']
+      applied_tags = task['tags']['tag']
+      applied_tags = [applied_tags] unless applied_tags.is_a?(Array)
+      if applied_tags.any?
+        metadata_applied << "🏷️ Tags: #{applied_tags.join(', ')}"
       end
     end
     
-    # Set priority
-    if priority && !priority.empty?
-      sleep 1  # Rate limiting
-      priority_result = set_task_priority(actual_list_id, task['id'], task_id, priority)
-      if priority_result.start_with?("✅")
-        priority_display = case priority
-        when '1' then '🔴 High'
-        when '2' then '🟡 Medium'  
-        when '3' then '🔵 Low'
-        else priority
-        end
-        metadata_results << "Priority: #{priority_display}"
-      else
-        metadata_results << "⚠️ Priority failed: #{priority_result}"
-      end
+    # Add metadata info to response
+    if metadata_applied.any?
+      response_parts.concat(metadata_applied)
     end
     
-    # Set tags
-    if tags && !tags.empty?
-      sleep 1  # Rate limiting
-      tags_result = add_task_tags(actual_list_id, task['id'], task_id, tags)
-      if tags_result.start_with?("✅")
-        metadata_results << "🏷️ Tags: #{tags}"
-      else
-        metadata_results << "⚠️ Tags failed: #{tags_result}"
-      end
-    end
-    
-    # Build response
-    response = "✅ Created task: #{task_name} in #{list_name}\n   IDs: list=#{actual_list_id}, series=#{task['id']}, task=#{task_id}"
-    
-    if metadata_results.any?
-      response += "\n" + metadata_results.join("\n")
-    end
-    
-    response
+    response_parts.join("\n")
   end
   
   def complete_task(list_id, taskseries_id, task_id)
@@ -2133,6 +2171,10 @@ end
 
 # Helper function for bearer token authentication
 def check_bearer_auth(request)
+  # NEW: Accept Cloudflare's authentication
+  cf_jwt = request['Cf-Access-Jwt-Assertion']
+  return { valid: true } if cf_jwt && !cf_jwt.empty?
+  
   auth_token = ENV['RTM_MCP_AUTH_TOKEN']
   
   # If no auth token configured, allow all requests (backward compatibility)
