@@ -751,12 +751,16 @@ class RTMMCPServer
       { 
         protocolVersion: '2024-11-20',
         capabilities: { 
-          tools: {}
+          tools: {
+            # Web Claude might expect the tools here
+          }
         },
         serverInfo: { 
           name: 'rtm-mcp', 
           version: '0.1.0'
         },
+        # Include tools directly in response for Web Claude
+        tools: @tools,
         # Auth info at top level of response
         auth: {
           type: "oauth2",
