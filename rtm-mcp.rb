@@ -1047,7 +1047,10 @@ class RTMMCPServer
   
   # Helper method to get list name by ID with caching
   def get_list_name(list_id)
-    return "Default List" if list_id.nil? || list_id.empty?
+    return "Default List" if list_id.nil? || (list_id.respond_to?(:empty?) && list_id.empty?)
+    
+    # Convert to string for consistent hash key access
+    list_id = list_id.to_s
     
     # Load list cache if not already loaded
     if @list_cache.nil?
@@ -1059,9 +1062,9 @@ class RTMMCPServer
         lists = result.dig('rsp', 'lists', 'list') || []
         lists = [lists] unless lists.is_a?(Array)  # Handle single list case
         
-        # Create a hash for fast lookup: list_id -> list_name
+        # Create a hash for fast lookup: list_id -> list_name (using string keys)
         @list_cache = {}
-        lists.each { |list| @list_cache[list['id']] = list['name'] }
+        lists.each { |list| @list_cache[list['id'].to_s] = list['name'] }
       end
     end
     
@@ -2233,11 +2236,17 @@ class RTMMCPServer
           # Add estimate display
           estimate_text = t['estimate'] && !t['estimate'].empty? ? " ⏱️#{t['estimate']}" : ""
           
-          # Add location display
-          location_text = ts['location'] && !ts['location'].empty? ? " 📍#{ts['location']}" : ""
+          # Add location display (with safety check)
+          location_text = ""
+          if ts.is_a?(Hash) && ts['location'] && !ts['location'].empty?
+            location_text = " 📍#{ts['location']}"
+          end
           
-          # Add URL display  
-          url_text = ts['url'] && !ts['url'].empty? ? " 🔗#{ts['url']}" : ""
+          # Add URL display (with safety check)
+          url_text = ""
+          if ts.is_a?(Hash) && ts['url'] && !ts['url'].empty?
+            url_text = " 🌐#{ts['url']}"
+          end
           
           # Check if this task has subtasks
           subtask_indicator = parent_task_ids.include?(ts['id']) ? " [has subtasks]" : ""
