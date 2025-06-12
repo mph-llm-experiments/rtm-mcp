@@ -729,6 +729,72 @@ class RTMMCPServer
           },
           required: ['list_id', 'taskseries_id', 'task_id', 'name']
         }
+      },
+      {
+        name: 'get_task_permalink',
+        description: 'Get the RTM web permalink for a specific task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            task_id: {
+              type: 'string',
+              description: 'Task ID to generate permalink for'
+            }
+          },
+          required: ['task_id']
+        }
+      },
+      {
+        name: 'set_task_location',
+        description: 'Set or update the location for a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'List ID containing the task'
+            },
+            taskseries_id: {
+              type: 'string',
+              description: 'Task series ID'
+            },
+            task_id: {
+              type: 'string',
+              description: 'Task ID'
+            },
+            location: {
+              type: 'string',
+              description: 'Location text (e.g., "Portland, OR", "Home office") or empty string to clear'
+            }
+          },
+          required: ['list_id', 'taskseries_id', 'task_id', 'location']
+        }
+      },
+      {
+        name: 'set_task_url',
+        description: 'Set or update the URL for a task',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            list_id: {
+              type: 'string',
+              description: 'List ID containing the task'
+            },
+            taskseries_id: {
+              type: 'string',
+              description: 'Task series ID'
+            },
+            task_id: {
+              type: 'string',
+              description: 'Task ID'
+            },
+            url: {
+              type: 'string',
+              description: 'URL (e.g., "https://example.com") or empty string to clear'
+            }
+          },
+          required: ['list_id', 'taskseries_id', 'task_id', 'url']
+        }
       }
     ]
   end  
@@ -822,6 +888,12 @@ class RTMMCPServer
       set_task_estimate(args['list_id'], args['taskseries_id'], args['task_id'], args['estimate'])
     when 'set_task_name'
       set_task_name(args['list_id'], args['taskseries_id'], args['task_id'], args['name'])
+    when 'get_task_permalink'
+      get_task_permalink(args['task_id'])
+    when 'set_task_location'
+      set_task_location(args['list_id'], args['taskseries_id'], args['task_id'], args['location'])
+    when 'set_task_url'
+      set_task_url(args['list_id'], args['taskseries_id'], args['task_id'], args['url'])
     else
       return { error: { code: -32602, message: "Unknown tool: #{tool_name}" } }
     end
@@ -975,7 +1047,10 @@ class RTMMCPServer
   
   # Helper method to get list name by ID with caching
   def get_list_name(list_id)
-    return "Default List" if list_id.nil? || list_id.empty?
+    return "Default List" if list_id.nil? || (list_id.respond_to?(:empty?) && list_id.empty?)
+    
+    # Convert to string for consistent hash key access
+    list_id = list_id.to_s
     
     # Load list cache if not already loaded
     if @list_cache.nil?
@@ -987,9 +1062,9 @@ class RTMMCPServer
         lists = result.dig('rsp', 'lists', 'list') || []
         lists = [lists] unless lists.is_a?(Array)  # Handle single list case
         
-        # Create a hash for fast lookup: list_id -> list_name
+        # Create a hash for fast lookup: list_id -> list_name (using string keys)
         @list_cache = {}
-        lists.each { |list| @list_cache[list['id']] = list['name'] }
+        lists.each { |list| @list_cache[list['id'].to_s] = list['name'] }
       end
     end
     
@@ -1495,6 +1570,107 @@ class RTMMCPServer
       "✅ Task renamed successfully!"
     end
   end
+  
+  def get_task_permalink(task_id)
+    return "Error: Task ID is required" unless task_id && !task_id.empty?
+    
+    permalink = generate_rtm_permalink(task_id)
+    if permalink
+      "🔗 RTM Permalink: #{permalink}\n\n📋 This link will open the task in Remember The Milk's web interface."
+    else
+      "❌ Could not generate permalink for task ID: #{task_id}"
+    end
+  end
+
+  def set_task_location(list_id, taskseries_id, task_id, location)
+    unless list_id && taskseries_id && task_id
+      return "Error: list_id, taskseries_id, and task_id are required"
+    end
+    
+    # location parameter can be empty string to clear
+    location ||= ""
+    
+    params = {
+      list_id: list_id,
+      taskseries_id: taskseries_id,
+      task_id: task_id,
+      location: location
+    }
+    
+    result = @rtm.call_method('rtm.tasks.setLocation', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
+      return "Error setting location: #{error_msg}"
+    end
+    
+    # Extract updated task info
+    list = result.dig('rsp', 'list')
+    taskseries = list&.dig('taskseries')
+    
+    if taskseries
+      # Handle taskseries being an array
+      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
+      task_name = ts['name']
+      
+      if location.empty?
+        "✅ Location cleared for: #{task_name}"
+      else
+        "✅ Location set for: #{task_name}\n📍 Location: #{location}"
+      end
+    else
+      if location.empty?
+        "✅ Location cleared successfully!"
+      else
+        "✅ Location set successfully!"
+      end
+    end
+  end
+
+  def set_task_url(list_id, taskseries_id, task_id, url)
+    unless list_id && taskseries_id && task_id
+      return "Error: list_id, taskseries_id, and task_id are required"
+    end
+    
+    # url parameter can be empty string to clear
+    url ||= ""
+    
+    params = {
+      list_id: list_id,
+      taskseries_id: taskseries_id,
+      task_id: task_id,
+      url: url
+    }
+    
+    result = @rtm.call_method('rtm.tasks.setURL', params)
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
+      return "Error setting URL: #{error_msg}"
+    end
+    
+    # Extract updated task info
+    list = result.dig('rsp', 'list')
+    taskseries = list&.dig('taskseries')
+    
+    if taskseries
+      # Handle taskseries being an array
+      ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
+      task_name = ts['name']
+      
+      if url.empty?
+        "✅ URL cleared for: #{task_name}"
+      else
+        "✅ URL set for: #{task_name}\n🔗 URL: #{url}"
+      end
+    else
+      if url.empty?
+        "✅ URL cleared successfully!"
+      else
+        "✅ URL set successfully!"
+      end
+    end
+  end
 
   def set_task_recurrence(list_id, taskseries_id, task_id, repeat)
     unless list_id && taskseries_id && task_id && repeat
@@ -1988,6 +2164,11 @@ class RTMMCPServer
 
   private
   
+  def generate_rtm_permalink(task_id)
+    return nil if task_id.nil? || task_id.empty?
+    "https://www.rememberthemilk.com/app/#tasks/#{task_id}"
+  end
+  
   def get_parent_task_ids(list_id = nil, original_filter = nil)
     # Build filter to find tasks with subtasks
     parent_filter = 'hasSubtasks:true'
@@ -2060,10 +2241,26 @@ class RTMMCPServer
           # Add estimate display
           estimate_text = t['estimate'] && !t['estimate'].empty? ? " ⏱️#{t['estimate']}" : ""
           
+          # Add location display (with safety check)
+          location_text = ""
+          if ts.is_a?(Hash) && ts['location'] && !ts['location'].empty?
+            location_text = " 📍#{ts['location']}"
+          end
+          
+          # Add URL display (with safety check)
+          url_text = ""
+          if ts.is_a?(Hash) && ts['url'] && !ts['url'].empty?
+            url_text = " 🌐#{ts['url']}"
+          end
+          
           # Check if this task has subtasks
           subtask_indicator = parent_task_ids.include?(ts['id']) ? " [has subtasks]" : ""
           
-          list_tasks << "#{status} #{ts['name']}#{priority}#{due_text}#{start_text}#{estimate_text}#{subtask_indicator}"
+          # Generate permalink
+          permalink = generate_rtm_permalink(t['id'])
+          permalink_text = permalink ? " 🔗 #{permalink}" : ""
+          
+          list_tasks << "#{status} #{ts['name']}#{priority}#{due_text}#{start_text}#{estimate_text}#{location_text}#{url_text}#{subtask_indicator}#{permalink_text}"
           
           # Add IDs if requested
           if show_ids
