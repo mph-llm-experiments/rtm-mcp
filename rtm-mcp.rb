@@ -744,22 +744,26 @@ class RTMMCPServer
   def handle_request(request)
     case request['method']
     when 'initialize'
-      # Get CF team domain from environment or use a placeholder
+      # Get CF team domain from environment
       cf_team = ENV['CF_ACCESS_TEAM_DOMAIN'] || 'your-team.cloudflareaccess.com'
       
+      # Return auth requirements per MCP spec
       { 
-        protocolVersion: '2024-11-05',
+        protocolVersion: '2024-11-20',
         capabilities: { 
-          tools: {},
-          # Add OAuth capability for Web Claude
-          auth: {
-            type: "oauth2",
-            authorization_url: "https://#{cf_team}/cdn-cgi/access/authorize",
-            token_url: "https://#{cf_team}/cdn-cgi/access/token",
-            scopes: ["email"]
-          }
+          tools: {}
         },
-        serverInfo: { name: 'rtm-mcp', version: '0.1.0' }
+        serverInfo: { 
+          name: 'rtm-mcp', 
+          version: '0.1.0'
+        },
+        # Auth info at top level of response
+        auth: {
+          type: "oauth2",
+          authorization_url: "https://#{cf_team}/cdn-cgi/access/authorize",
+          token_url: "https://#{cf_team}/cdn-cgi/access/token",
+          scopes: ["email"]
+        }
       }
     when 'tools/list'
       { tools: @tools }
@@ -2275,6 +2279,25 @@ def run_http_server(server, port)
     })
   end
   
+  # OAuth discovery endpoint (no auth required)
+  webrick_server.mount_proc '/mcp-discovery' do |req, res|
+    res['Content-Type'] = 'application/json'
+    res['Access-Control-Allow-Origin'] = '*'
+    res.status = 200
+    
+    cf_team = ENV['CF_ACCESS_TEAM_DOMAIN'] || 'your-team.cloudflareaccess.com'
+    
+    res.body = JSON.generate({
+      mcp_endpoint: '/sse',
+      auth: {
+        type: "oauth2",
+        authorization_url: "https://#{cf_team}/cdn-cgi/access/authorize",
+        token_url: "https://#{cf_team}/cdn-cgi/access/token",
+        scopes: ["email"]
+      }
+    })
+  end
+  
   # MCP JSON-RPC endpoint
   webrick_server.mount_proc '/sse' do |req, res|
     res['Access-Control-Allow-Origin'] = '*'
@@ -2295,28 +2318,31 @@ def run_http_server(server, port)
       next
     end
     
-    # Check bearer token authentication
-    auth_result = check_bearer_auth(req)
-    unless auth_result[:valid]
-      res.status = auth_result[:status]
-      res['Content-Type'] = 'application/json'
-      res['WWW-Authenticate'] = auth_result[:www_authenticate] if auth_result[:www_authenticate]
-      res.body = JSON.generate({
-        jsonrpc: '2.0',
-        id: nil,
-        error: { 
-          code: -32600, 
-          message: auth_result[:error] 
-        }
-      })
-      next
-    end
-    
     begin
       request_body = req.body
       STDERR.puts "Received HTTP request: #{request_body}"
       
       request_data = JSON.parse(request_body)
+      
+      # Allow initialize method without authentication so Web Claude can discover OAuth
+      if request_data['method'] != 'initialize'
+        # Check bearer token authentication for all other methods
+        auth_result = check_bearer_auth(req)
+        unless auth_result[:valid]
+          res.status = auth_result[:status]
+          res['Content-Type'] = 'application/json'
+          res['WWW-Authenticate'] = auth_result[:www_authenticate] if auth_result[:www_authenticate]
+          res.body = JSON.generate({
+            jsonrpc: '2.0',
+            id: request_data['id'],
+            error: { 
+              code: -32600, 
+              message: auth_result[:error] 
+            }
+          })
+          next
+        end
+      end
       result = $rtm_server.handle_request(request_data)
       response = {
         jsonrpc: '2.0',
