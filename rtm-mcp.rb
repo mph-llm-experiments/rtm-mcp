@@ -750,15 +750,12 @@ class RTMMCPServer
       # Get CF team domain from environment
       cf_team = ENV['CF_ACCESS_TEAM_DOMAIN'] || 'your-team.cloudflareaccess.com'
       
-      # Return capabilities per MCP spec
+      # Match the protocol version Web Claude is using
       { 
-        protocolVersion: '2024-11-20',
+        protocolVersion: '2024-11-05',
         capabilities: { 
           # Explicitly declare we support tools
-          tools: {
-            supportsProgress: false,
-            supportsCancellation: false
-          }
+          tools: {}
         },
         serverInfo: { 
           name: 'rtm-mcp', 
