@@ -742,33 +742,28 @@ class RTMMCPServer
     ]
   end  
   def handle_request(request)
-    case request['method']
+    method = request['method']
+    STDERR.puts "Handling method: #{method}"
+    
+    case method
     when 'initialize'
       # Get CF team domain from environment
       cf_team = ENV['CF_ACCESS_TEAM_DOMAIN'] || 'your-team.cloudflareaccess.com'
       
-      # Return auth requirements per MCP spec
+      # Return capabilities per MCP spec
       { 
         protocolVersion: '2024-11-20',
         capabilities: { 
+          # Explicitly declare we support tools
           tools: {
-            # Web Claude might expect the tools here
+            supportsProgress: false,
+            supportsCancellation: false
           }
         },
         serverInfo: { 
           name: 'rtm-mcp', 
           version: '0.1.0'
-        },
-        # Include tools directly in response for Web Claude
-        tools: @tools
-        # Auth info at top level of response
-        # TEMPORARILY COMMENTED OUT FOR TESTING
-        # auth: {
-        #   type: "oauth2",
-        #   authorization_url: "https://#{cf_team}/cdn-cgi/access/authorize",
-        #   token_url: "https://#{cf_team}/cdn-cgi/access/token",
-        #   scopes: ["email"]
-        # }
+        }
       }
     when 'tools/list'
       { tools: @tools }
