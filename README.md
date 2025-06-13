@@ -30,22 +30,33 @@ This MCP server enables Claude to interact with Remember The Milk tasks, lists, 
 - **Tags**: Add and remove tags from tasks
 - **Task Names**: Rename tasks
 - **Notes**: Add, edit, delete, and read task notes
+- **Locations**: Set/clear locations from predefined RTM locations with 📍 display
+- **URLs**: Set/clear task URLs with 🌐 display
+- **Permalinks**: Generate RTM web interface links for tasks
 
 #### Advanced Features
 - **Recurrence**: Set and clear recurring task patterns
 - **Subtasks**: Create and list subtasks (requires RTM Pro)
 - **Search & Filtering**: List tasks with various filters and search criteria
+- **Location Management**: List predefined locations and set task locations
+- **Bulk Operations**: Move tasks between lists, batch tag operations
 
-### ⚠️ Partial/Limited Support
+### ⚠️ Known Limitations
 
 #### Subtasks
 - **Create Subtask**: ✅ Works (requires RTM Pro account)
 - **List Subtasks**: ⚠️ Workaround implementation (RTM API limitation)
 
-#### Missing Features
-- Location metadata (not yet implemented)
-- URL metadata (not yet implemented)
-- Bulk/batch operations (not yet implemented)
+## Implementation Status
+
+The RTM MCP server now implements **comprehensive RTM functionality** including:
+- ✅ All core task operations (CRUD, metadata, search)
+- ✅ Location support with predefined location management
+- ✅ URL and permalink functionality  
+- ✅ Advanced features (recurrence, subtasks, bulk operations)
+- ✅ Comprehensive error handling and user-friendly responses
+
+The server provides nearly complete coverage of RTM's API functionality suitable for daily task management through Claude Desktop.
 
 ## Quick Setup
 
@@ -140,8 +151,12 @@ Once configured, you can use natural language with Claude:
 "Show me all high priority tasks"
 "Add a note to the 'Review Q4 budget' task"
 "Set the estimate for 'Write documentation' to 2 hours"
+"Set the location of 'Meet with client' to Downtown Office"
+"Add the URL https://github.com/myproject to the 'Code review' task"
 "Move all tasks tagged 'urgent' to my Work list"
 "Mark the 'Buy groceries' task as complete"
+"Show me what locations are available in RTM"
+"Get a permalink for the 'Important meeting' task"
 ```
 
 ## Security Notes
@@ -187,10 +202,10 @@ Once configured, you can use natural language with Claude:
 1. **Subtask listing**: RTM API doesn't provide direct subtask enumeration (our implementation uses a workaround)
 2. **Pro features**: Some features (like subtasks) require RTM Pro subscription
 
-### Implementation Gaps
-1. **Location metadata**: Not yet implemented (RTM supports this)
-2. **URL metadata**: Not yet implemented (RTM supports this)
-3. **Smart Add parsing**: Uses basic task creation instead of RTM's Smart Add syntax
+### Minor Implementation Gaps
+1. **Smart Add parsing**: Uses standard task creation instead of RTM's Smart Add syntax
+2. **Contacts/Sharing**: RTM's contact and task sharing features not implemented
+3. **Groups**: RTM group functionality not implemented
 
 ## Development & Testing
 
