@@ -745,6 +745,15 @@ class RTMMCPServer
         }
       },
       {
+        name: 'get_locations',
+        description: 'Get list of predefined locations from RTM account',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      },
+      {
         name: 'set_task_location',
         description: 'Set or update the location for a task',
         inputSchema: {
@@ -890,6 +899,8 @@ class RTMMCPServer
       set_task_name(args['list_id'], args['taskseries_id'], args['task_id'], args['name'])
     when 'get_task_permalink'
       get_task_permalink(args['task_id'])
+    when 'get_locations'
+      get_locations
     when 'set_task_location'
       set_task_location(args['list_id'], args['taskseries_id'], args['task_id'], args['location'])
     when 'set_task_url'
@@ -1582,26 +1593,74 @@ class RTMMCPServer
     end
   end
 
+  def get_locations
+    result = @rtm.call_method('rtm.locations.getList')
+    
+    if result['error'] || result.dig('rsp', 'stat') == 'fail'
+      error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
+      return "❌ Error getting locations: #{error_msg}"
+    end
+    
+    locations = result.dig('rsp', 'locations', 'location')
+    
+    if !locations || (locations.is_a?(Array) && locations.empty?)
+      return "📍 No predefined locations found in your RTM account.\n\n💡 You can add locations in the RTM web interface under Settings > Locations."
+    end
+    
+    # Handle both single location (Hash) and multiple locations (Array)
+    location_list = locations.is_a?(Array) ? locations : [locations]
+    
+    output = []
+    output << "📍 **Available Locations** (#{location_list.length} total):\n"
+    
+    location_list.each_with_index do |location, index|
+      output << "#{index + 1}. **#{location['name']}**"
+      output << "   ID: #{location['id']}"
+      output << "   Address: #{location['address']}" if location['address'] && !location['address'].empty?
+      output << "   Coordinates: #{location['latitude']}, #{location['longitude']}" if location['latitude'] && location['longitude']
+      output << ""
+    end
+    
+    output << "💡 **Usage:** Use location names or IDs with set_task_location"
+    output << "🔧 **Debug:** RTM API returns these as predefined locations with IDs"
+    
+    output.join("\n")
+  end
+
   def set_task_location(list_id, taskseries_id, task_id, location)
     unless list_id && taskseries_id && task_id
       return "Error: list_id, taskseries_id, and task_id are required"
     end
     
-    # location parameter can be empty string to clear
-    location ||= ""
-    
-    params = {
-      list_id: list_id,
-      taskseries_id: taskseries_id,
-      task_id: task_id,
-      location: location
-    }
+    # If location is empty string, clear the location
+    if location.nil? || location.empty?
+      params = {
+        list_id: list_id,
+        taskseries_id: taskseries_id,
+        task_id: task_id
+        # No location_id parameter clears the location
+      }
+    else
+      # Convert location name to location_id if needed
+      location_id = resolve_location_id(location)
+      
+      if location_id.nil?
+        return "❌ Error: Location '#{location}' not found. Use get_locations to see available locations."
+      end
+      
+      params = {
+        list_id: list_id,
+        taskseries_id: taskseries_id,
+        task_id: task_id,
+        location_id: location_id  # ✅ Correct parameter name
+      }
+    end
     
     result = @rtm.call_method('rtm.tasks.setLocation', params)
     
     if result['error'] || result.dig('rsp', 'stat') == 'fail'
       error_msg = result.dig('rsp', 'err', 'msg') || result['error'] || 'Unknown error'
-      return "Error setting location: #{error_msg}"
+      return "❌ Error setting location: #{error_msg}"
     end
     
     # Extract updated task info
@@ -1613,18 +1672,44 @@ class RTMMCPServer
       ts = taskseries.is_a?(Array) ? taskseries[0] : taskseries
       task_name = ts['name']
       
-      if location.empty?
+      if location.nil? || location.empty?
         "✅ Location cleared for: #{task_name}"
       else
         "✅ Location set for: #{task_name}\n📍 Location: #{location}"
       end
     else
-      if location.empty?
+      if location.nil? || location.empty?
         "✅ Location cleared successfully!"
       else
         "✅ Location set successfully!"
       end
     end
+  end
+  
+  # Helper method to resolve location name to location_id
+  def resolve_location_id(location_input)
+    # If input looks like a numeric ID, use it directly
+    return location_input if location_input.match?(/^\d+$/)
+    
+    # Otherwise, get locations and find matching name
+    locations_result = @rtm.call_method('rtm.locations.getList')
+    
+    if locations_result['error'] || locations_result.dig('rsp', 'stat') == 'fail'
+      return nil
+    end
+    
+    locations = locations_result.dig('rsp', 'locations', 'location')
+    return nil unless locations
+    
+    # Handle both single location (Hash) and multiple locations (Array)
+    location_list = locations.is_a?(Array) ? locations : [locations]
+    
+    # Find location by name (case-insensitive)
+    matching_location = location_list.find do |loc|
+      loc['name'].downcase == location_input.downcase
+    end
+    
+    matching_location ? matching_location['id'] : nil
   end
 
   def set_task_url(list_id, taskseries_id, task_id, url)
