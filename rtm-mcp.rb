@@ -1711,6 +1711,31 @@ class RTMMCPServer
     
     matching_location ? matching_location['id'] : nil
   end
+  
+  # Helper method to resolve location_id back to location name (for display)
+  def resolve_location_name(location_id)
+    return nil unless location_id && !location_id.empty?
+    
+    # Get locations from RTM
+    locations_result = @rtm.call_method('rtm.locations.getList')
+    
+    if locations_result['error'] || locations_result.dig('rsp', 'stat') == 'fail'
+      return nil
+    end
+    
+    locations = locations_result.dig('rsp', 'locations', 'location')
+    return nil unless locations
+    
+    # Handle both single location (Hash) and multiple locations (Array)
+    location_list = locations.is_a?(Array) ? locations : [locations]
+    
+    # Find location by ID
+    matching_location = location_list.find do |loc|
+      loc['id'] == location_id
+    end
+    
+    matching_location ? matching_location['name'] : nil
+  end
 
   def set_task_url(list_id, taskseries_id, task_id, url)
     unless list_id && taskseries_id && task_id
@@ -2328,8 +2353,9 @@ class RTMMCPServer
           
           # Add location display (with safety check)
           location_text = ""
-          if ts.is_a?(Hash) && ts['location'] && !ts['location'].empty?
-            location_text = " 📍#{ts['location']}"
+          if ts.is_a?(Hash) && ts['location_id'] && !ts['location_id'].empty?
+            location_name = resolve_location_name(ts['location_id'])
+            location_text = location_name ? " 📍#{location_name}" : " 📍[Location ID: #{ts['location_id']}]"
           end
           
           # Add URL display (with safety check)
